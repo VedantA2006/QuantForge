@@ -226,6 +226,10 @@ function StrategyDetails({ strategy, symbol, intervals }) {
   }
 
   const s = strategy.strategy || {};
+  const m = strategy.metrics || {};
+  const yearlyReturns = m.yearly_returns || {};
+  const avgYearlyReturn = m.avg_yearly_return || 0;
+  
   const readable = s.readable || "Generating strategy logic...";
   const lines = readable.split('\n');
   const riskLine = lines.find(l => l.includes('RISK:')) || '';
@@ -245,15 +249,40 @@ function StrategyDetails({ strategy, symbol, intervals }) {
           </button>
         </a>
       </div>
-      <div className="code-block">
-        {logicLines.map((line, i) => (
-          <div key={i} className="code-line">
-            {line.includes('BUY:') ? <span className="keyword buy">BUY:</span> : 
-             line.includes('SELL:') ? <span className="keyword sell">SELL:</span> : 
-             <span className="code-text">{line}</span>}
-            {line.includes('BUY:') || line.includes('SELL:') ? <span className="code-text">{line.split(/BUY:|SELL:/)[1]}</span> : null}
+      <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
+        <div className="code-block" style={{ flexGrow: 1, margin: 0 }}>
+          {logicLines.map((line, i) => (
+            <div key={i} className="code-line">
+              {line.includes('BUY:') ? <span className="keyword buy">BUY:</span> : 
+               line.includes('SELL:') ? <span className="keyword sell">SELL:</span> : 
+               <span className="code-text">{line}</span>}
+              {line.includes('BUY:') || line.includes('SELL:') ? <span className="code-text">{line.split(/BUY:|SELL:/)[1]}</span> : null}
+            </div>
+          ))}
+        </div>
+        
+        {Object.keys(yearlyReturns).length > 0 && (
+          <div className="code-block" style={{ minWidth: '180px', margin: 0, fontSize: '13px' }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', fontWeight: 600 }}>
+              <span style={{ display: 'inline-block', width: '60px' }}>Year</span>
+              <span>Return (%)</span>
+            </div>
+            {Object.entries(yearlyReturns).map(([year, ret]) => (
+              <div key={year} style={{ display: 'flex', marginBottom: '4px' }}>
+                <span style={{ width: '60px', color: 'var(--accent-blue)' }}>{year}</span>
+                <span style={{ color: ret > 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                  {ret.toFixed(2)}
+                </span>
+              </div>
+            ))}
+            <div style={{ marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '8px', display: 'flex', fontWeight: 600 }}>
+              <span style={{ width: '60px', color: 'var(--text-color)' }}>Avg</span>
+              <span style={{ color: avgYearlyReturn > 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                {avgYearlyReturn.toFixed(2)}
+              </span>
+            </div>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
