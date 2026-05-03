@@ -258,7 +258,7 @@ def _compute_metrics(
     # Monthly returns (approximate)
     if "datetime" in df.columns:
         try:
-            result.monthly_returns = _calc_monthly_returns(equity, df)
+            result.monthly_returns = _calc_monthly_returns(trades, initial_balance, df)
         except Exception:
             result.monthly_returns = []
 
@@ -267,16 +267,37 @@ def _compute_metrics(
     return result
 
 
-def _calc_monthly_returns(equity: List[float], df: pd.DataFrame) -> List[float]:
-    """Approximate monthly returns from equity curve."""
-    if len(equity) < 2:
+def _calc_monthly_returns(trades: List[Dict], initial_balance: float, df: pd.DataFrame) -> List[float]:
+    """Calculate true calendar monthly returns from trades."""
+    if "datetime" not in df.columns:
         return []
-    # Simple: divide equity curve into ~30-bar chunks
-    chunk = max(1, len(equity) // 12)
-    monthly = []
-    for i in range(0, len(equity) - 1, chunk):
-        end = min(i + chunk, len(equity) - 1)
-        if equity[i] > 0:
-            ret = (equity[end] - equity[i]) / equity[i] * 100
-            monthly.append(round(ret, 2))
-    return monthly
+        
+    datetimes = pd.to_datetime(df["datetime"])
+    daily_dates = datetimes.dt.normalize().unique()
+    daily_bal = pd.Series(index=daily_dates, dtype=float)
+    
+    current_bal = initial_balance
+    if len(daily_bal) > 0:
+        daily_bal.iloc[0] = current_bal
+        
+    for t in trades:
+        exit_dt = datetimes.iloc[t["exit_bar"]].normalize()
+        current_bal += t["pnl"]
+        daily_bal.loc[exit_dt] = current_bal
+        
+    daily_bal = daily_bal.ffill()
+    
+    # Use "M" for backwards compatibility, or "ME" for pandas >= 2.2
+    # But since M works in both (with a deprecation warning in 2.2), we'll use M to be safe, 
+    # or just ME with a fallback if older pandas
+    resampler_code = "ME" if pd.__version__ >= "2.2.0" else "M"
+    monthly_bal = daily_bal.resample(resampler_code).last().dropna()
+    
+    monthly_returns = []
+    prev_bal = initial_balance
+    for end_bal in monthly_bal:
+        ret = (end_bal / prev_bal - 1) * 100
+        monthly_returns.append(round(ret, 2))
+        prev_bal = end_bal
+        
+    return monthly_returns
