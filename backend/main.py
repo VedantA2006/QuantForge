@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 # ── Ensure backend is importable ──────────────────────────────
-# Add quantforge/ (parent of backend/) to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI
@@ -26,17 +25,16 @@ from backend.config import (
 )
 from backend.data.cache import DataCache
 from backend.data.indicators import compute_all_indicators
-from backend.strategy.generator import generate_batch
+from backend.strategy.generator import generate_batch, update_category_weights, record_category_stats
 from backend.strategy.tree import Strategy
 from backend.engine.backtester import run_backtest
 from backend.engine.validator import validate_strategy
 from backend.engine.ranker import rank_strategies
-from backend.engine.optimizer import evolve_population
+from backend.engine.optimizer import evolve_population, BayesianOptimizer
 from backend.db.mongo import MongoDB
 from backend.api.routes import router, init_routes
 
 # ── Logging ───────────────────────────────────────────────────
-# Fix Windows console encoding for emoji characters
 _fmt = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -44,7 +42,6 @@ _fmt = logging.Formatter(
 _stream = logging.StreamHandler(sys.stdout)
 _stream.setFormatter(_fmt)
 _stream.setLevel(logging.INFO)
-# Use errors='replace' to handle emoji on Windows cp1252
 try:
     import io
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -69,11 +66,13 @@ state = {
     "should_run": True,
     "batch_size": BATCH_SIZE,
     "ga_cycles": 0,
+    "bayes_cycles": 0,
     "start_time": time.time(),
 }
 
 db = MongoDB()
 data_cache = DataCache()
+bayesian_optimizer = BayesianOptimizer()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -86,7 +85,7 @@ async def discovery_loop():
     GENERATE → BACKTEST → VALIDATE → RANK → STORE → OPTIMIZE → REPEAT
     """
     log.info("=" * 60)
-    log.info("  QuantForge — Strategy Discovery Engine Starting")
+    log.info("  QuantForge v2.0 — Strategy Discovery Engine Starting")
     log.info("=" * 60)
 
     # ── Load data ─────────────────────────────────────────────
@@ -116,10 +115,21 @@ async def discovery_loop():
             log.info(f"  CYCLE {cycle}")
             log.info(f"{'='*50}")
 
+            # ── Update category weights from DB ───────────────
+            update_category_weights(db)
+
             # ── 1. GENERATE ───────────────────────────────────
+            # Get Bayesian suggestions every GA cycle
+            bayes_suggestions = None
+            if cycle % GA_EVOLVE_EVERY_N_CYCLES == 0:
+                bayes_suggestions = bayesian_optimizer.suggest(SYMBOL, n=5)
+                if bayes_suggestions:
+                    state["bayes_cycles"] += 1
+
             strategies = generate_batch(
                 ga_offspring=ga_offspring,
                 batch_size=BATCH_SIZE,
+                bayesian_suggestions=bayes_suggestions,
             )
             ga_offspring = []  # consumed
 
@@ -128,6 +138,15 @@ async def discovery_loop():
             for strat in strategies:
                 bt = run_backtest(strat, df)
                 state["total_evaluated"] += 1
+
+                # Record for Bayesian optimizer
+                if bt.total_trades >= 10:
+                    score = bt.sharpe_ratio * 0.3 + bt.total_return_pct * 0.001
+                    bayesian_optimizer.record(
+                        SYMBOL,
+                        strat.risk_params.param_vector(),
+                        score,
+                    )
 
                 if bt.total_trades < 10:
                     continue
@@ -146,6 +165,9 @@ async def discovery_loop():
                     "passed": val.passed,
                 })
 
+                # Record category stats
+                record_category_stats(db, strat, is_top20=False)
+
             # ── 4. RANK ───────────────────────────────────────
             ranked = rank_strategies(results)
 
@@ -153,13 +175,13 @@ async def discovery_loop():
             state["total_passed"] += passed_count
 
             # ── 5. STORE best ─────────────────────────────────
-            for r in ranked:   # store all ranked strategies
+            for idx, r in enumerate(ranked):
                 strat_dict = next(
                     (s.to_dict() for s in strategies
                      if s.strategy_id == r.strategy_id),
                     {}
                 )
-                
+
                 db.upsert_best({
                     "strategy_id": r.strategy_id,
                     "rank_score": r.rank_score,
@@ -167,14 +189,20 @@ async def discovery_loop():
                     "validation": r.validation.to_dict(),
                     "strategy": strat_dict,
                 })
-                
+
+                # Record top 20 category stats
+                if idx < 20:
+                    strat_obj = next(
+                        (s for s in strategies if s.strategy_id == r.strategy_id),
+                        None,
+                    )
+                    if strat_obj:
+                        record_category_stats(db, strat_obj, is_top20=True)
+
                 # Check strict conditions for "Fully Passed"
-                # 1. Ratio of winning trade > 2.0 * losing trade
-                # 2. Minimum avg each month return >= 30%
-                # 3. Win rate >= 65%
                 bt = r.backtest
                 monthly_avg = sum(bt.monthly_returns) / len(bt.monthly_returns) if bt.monthly_returns else 0.0
-                
+
                 if bt.avg_win >= (1.5 * bt.avg_loss) and monthly_avg >= 3.0 and bt.win_rate >= 35.0:
                     db.save_fully_passed({
                         "strategy_id": r.strategy_id,
@@ -185,7 +213,7 @@ async def discovery_loop():
                         "monthly_avg": monthly_avg,
                         "win_loss_ratio": bt.avg_win / bt.avg_loss if bt.avg_loss > 0 else 100.0,
                     })
-                    log.info(f"💎 SUPER STRATEGY DISCOVERED: {r.strategy_id} (Win Rate: {bt.win_rate:.1f}%, RR: {bt.avg_win/bt.avg_loss if bt.avg_loss>0 else 100:.1f}, Monthly: {monthly_avg:.1f}%)")
+                    log.info(f"SUPER STRATEGY DISCOVERED: {r.strategy_id} (Win Rate: {bt.win_rate:.1f}%, RR: {bt.avg_win/bt.avg_loss if bt.avg_loss>0 else 100:.1f}, Monthly: {monthly_avg:.1f}%)")
 
             # ── 6. OPTIMIZE (GA) every N cycles ───────────────
             if cycle % GA_EVOLVE_EVERY_N_CYCLES == 0:
@@ -247,7 +275,6 @@ async def discovery_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start discovery loop on app startup."""
     init_routes(db, state)
     task = asyncio.create_task(discovery_loop())
     yield
@@ -258,7 +285,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="QuantForge",
     description="Autonomous Trading Strategy Discovery Engine",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -277,7 +304,7 @@ app.include_router(router)
 async def root():
     return {
         "name": "QuantForge",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": state.get("status", "idle"),
     }
 

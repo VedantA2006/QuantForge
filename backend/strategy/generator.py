@@ -1,128 +1,352 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  QuantForge — Strategy Generator                            ║
-# ║  Random + Template + GA offspring generation                ║
+# ║  QuantForge — Strategy Generator (Category-Based + Tree)   ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 import random
 import logging
-from typing import List
-from backend.config import (
-    BATCH_SIZE, MAX_TREE_DEPTH, RANDOM_RATIO, TEMPLATE_RATIO, GA_RATIO,
-)
+from typing import List, Optional
+
 from backend.strategy.tree import (
     Strategy, RiskParams, Node, BooleanNode, ComparisonNode,
     IndicatorNode, ConstantNode, ArithmeticNode,
 )
-from backend.strategy.templates import generate_from_template
-from backend.data.indicators import ALL_INDICATOR_COLUMNS
+from backend.config import BATCH_SIZE, MAX_TREE_DEPTH, RANDOM_RATIO, TEMPLATE_RATIO, GA_RATIO
 
 log = logging.getLogger("quantforge.strategy.generator")
 
-# Indicators suitable for comparison with constants
+# ── Timeframe prefixes with sampling weights ──────────────────────────────
+_TF_WEIGHTS = {"tf_1h_": 0.50, "tf_4h_": 0.30, "tf_1d_": 0.20}
+
+def _pick_tf() -> str:
+    return random.choices(list(_TF_WEIGHTS.keys()), weights=list(_TF_WEIGHTS.values()), k=1)[0]
+
+# ── Indicator lists ───────────────────────────────────────────────────────
 _BOUNDED_INDICATORS = [
-    "rsi_7", "rsi_14", "rsi_21", "stoch_k", "stoch_d", "adx_14", "bb_width", "roc_10"
+    "rsi_7", "rsi_14", "rsi_21", "stoch_k", "stoch_d", "adx_14",
+    "bb_width", "roc_10", "willr_14", "cci_20", "mfi_14", "cmf_20",
 ]
 _BOUNDED_RANGES = {
     "rsi_7": (20, 80), "rsi_14": (20, 80), "rsi_21": (20, 80),
     "stoch_k": (15, 85), "stoch_d": (15, 85), "adx_14": (15, 50),
-    "bb_width": (0.05, 0.25), "roc_10": (-15.0, 15.0),
+    "bb_width": (0.02, 0.15), "roc_10": (-15.0, 15.0),
+    "willr_14": (-90, -10), "cci_20": (-200, 200),
+    "mfi_14": (20, 80), "cmf_20": (-0.3, 0.3),
 }
-# Indicators suitable for cross-comparison
 _CROSS_INDICATORS = [
     "ema_8", "ema_13", "ema_21", "ema_34", "ema_55", "ema_89", "ema_200",
     "sma_20", "sma_50", "sma_200", "bb_upper", "bb_middle", "bb_lower",
     "close", "open", "high", "low", "macd_line", "macd_signal",
+    "supertrend_10_3", "high_10", "high_20", "low_10", "low_20",
 ]
 _COMPARISON_OPS = [">", "<", ">=", "<=", "crossover", "crossunder"]
 _BOOLEAN_OPS = ["AND", "OR"]
 
+# ── Category-based condition generation ───────────────────────────────────
+CATEGORY_WEIGHTS = {
+    "ema_crossover": 10, "rsi_thresh": 10, "macd_thresh": 8, "stoch_thresh": 7,
+    "adx_thresh": 9, "bb_crossover": 7, "momentum_roc": 6, "candle_struct": 5,
+    "volume_profile": 6, "price_struct": 5, "regime_filter": 8,
+    "supertrend": 7, "vwap_dev": 5, "cmf": 5, "williams_r": 5,
+    "ema_vs_sma": 6, "sma_crossover": 6, "price_vs_sma": 6,
+    "rsi_range": 5, "rsi_momentum": 5, "stoch_cross": 6, "mfi_thresh": 5,
+    "cci_thresh": 5, "bb_squeeze": 6, "breakout_nh": 6, "volume_spike": 5,
+    "multi_tf_confirm": 8, "cross_tf_rsi": 7, "mean_reversion": 5,
+    "consec_candles": 4, "wick_bias": 4, "obv_momentum": 5, "willr_extreme": 5,
+}
+
+def update_category_weights(db):
+    """Update category weights from MongoDB stats. Categories in top strategies get boosted."""
+    try:
+        if hasattr(db, '_fallback') and db._fallback:
+            return
+        stats = list(db.db.category_stats.find({}, {"_id": 0}))
+        for s in stats:
+            cat = s.get("category", "")
+            top20 = s.get("appearances_top20", 0)
+            total = max(s.get("appearances_total", 1), 1)
+            if cat in CATEGORY_WEIGHTS and top20 > 3:
+                boost = min(top20 / total * 20, 20)
+                CATEGORY_WEIGHTS[cat] = max(5, int(boost))
+    except Exception:
+        pass
+
+
+def _generate_category_condition(category: str, direction: str = "buy") -> ComparisonNode:
+    """Generate a single condition node from a category. direction = 'buy' or 'sell'."""
+    tf = _pick_tf()
+    is_buy = direction == "buy"
+
+    if category == "ema_crossover":
+        fast = random.choice(["ema_8", "ema_13", "ema_21"])
+        slow = random.choice(["ema_34", "ema_55", "ema_89"])
+        op = "crossover" if is_buy else "crossunder"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}{fast}"), right=IndicatorNode(column=f"{tf}{slow}"))
+
+    elif category == "rsi_thresh":
+        thresh = random.randint(25, 35) if is_buy else random.randint(65, 75)
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}rsi_14"), right=ConstantNode(value=thresh))
+
+    elif category == "macd_thresh":
+        op = "crossover" if is_buy else "crossunder"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}macd_line"), right=IndicatorNode(column=f"{tf}macd_signal"))
+
+    elif category == "stoch_thresh":
+        thresh = random.randint(15, 25) if is_buy else random.randint(75, 85)
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}stoch_k"), right=ConstantNode(value=thresh))
+
+    elif category == "adx_thresh":
+        thresh = random.randint(20, 35)
+        return ComparisonNode(operator=">", left=IndicatorNode(column=f"{tf}adx_14"), right=ConstantNode(value=thresh))
+
+    elif category == "bb_crossover":
+        band = "bb_lower" if is_buy else "bb_upper"
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}close" if tf == "tf_1h_" else f"{tf}ema_21"), right=IndicatorNode(column=f"{tf}{band}"))
+
+    elif category == "momentum_roc":
+        thresh = round(random.uniform(1, 5), 1)
+        op = ">" if is_buy else "<"
+        val = thresh if is_buy else -thresh
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}roc_10"), right=ConstantNode(value=val))
+
+    elif category == "candle_struct":
+        pattern = "is_engulfing_bull" if is_buy else "is_engulfing_bear"
+        return ComparisonNode(operator=">", left=IndicatorNode(column=f"{tf}{pattern}"), right=ConstantNode(value=0.5))
+
+    elif category == "volume_profile":
+        thresh = round(random.uniform(1.2, 2.0), 1)
+        return ComparisonNode(operator=">", left=IndicatorNode(column=f"{tf}volume_ratio"), right=ConstantNode(value=thresh))
+
+    elif category == "price_struct":
+        n = random.choice([10, 20])
+        col = f"high_{n}" if is_buy else f"low_{n}"
+        op = ">=" if is_buy else "<="
+        return ComparisonNode(operator=op, left=IndicatorNode(column="close"), right=IndicatorNode(column=f"{tf}{col}"))
+
+    elif category == "regime_filter":
+        val = 0.5
+        op = ">" if is_buy else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}regime"), right=ConstantNode(value=val))
+
+    elif category == "supertrend":
+        op = ">" if is_buy else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column="close"), right=IndicatorNode(column=f"{tf}supertrend_10_3"))
+
+    elif category == "vwap_dev":
+        thresh = round(random.uniform(-2, -0.5), 1) if is_buy else round(random.uniform(0.5, 2), 1)
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}vwap_dev"), right=ConstantNode(value=thresh))
+
+    elif category == "cmf":
+        thresh = round(random.uniform(0.05, 0.2), 2)
+        op = ">" if is_buy else "<"
+        val = thresh if is_buy else -thresh
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}cmf_20"), right=ConstantNode(value=val))
+
+    elif category == "williams_r":
+        thresh = random.randint(-90, -70) if is_buy else random.randint(-30, -10)
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}willr_14"), right=ConstantNode(value=thresh))
+
+    elif category == "mfi_thresh":
+        thresh = random.randint(20, 35) if is_buy else random.randint(65, 80)
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}mfi_14"), right=ConstantNode(value=thresh))
+
+    elif category == "cci_thresh":
+        thresh = random.randint(-150, -80) if is_buy else random.randint(80, 150)
+        op = "<" if is_buy else ">"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}cci_20"), right=ConstantNode(value=thresh))
+
+    elif category == "bb_squeeze":
+        thresh = round(random.uniform(0.02, 0.06), 3)
+        return ComparisonNode(operator="<", left=IndicatorNode(column=f"{tf}bb_width"), right=ConstantNode(value=thresh))
+
+    elif category == "multi_tf_confirm":
+        tf2 = "tf_4h_" if tf == "tf_1h_" else "tf_1h_"
+        op = ">" if is_buy else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf2}ema_21"), right=IndicatorNode(column=f"{tf2}ema_55"))
+
+    elif category == "cross_tf_rsi":
+        tf2 = "tf_4h_"
+        thresh = random.randint(40, 55) if is_buy else random.randint(55, 70)
+        op = ">" if is_buy else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf2}rsi_14"), right=ConstantNode(value=thresh))
+
+    elif category == "obv_momentum":
+        op = ">" if is_buy else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}obv_slope_5"), right=ConstantNode(value=0))
+
+    elif category == "consec_candles":
+        col = "consec_bullish_2" if is_buy else "consec_bullish_2"
+        expected = 1 if is_buy else 0
+        op = ">=" if is_buy else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}{col}"), right=ConstantNode(value=0.5))
+
+    # fallback — simple EMA comparison
+    ema_col = random.choice(["ema_8", "ema_13", "ema_21"])
+    sma_col = random.choice(["sma_20", "sma_50"])
+    op = ">" if is_buy else "<"
+    return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}{ema_col}"), right=IndicatorNode(column=f"{tf}{sma_col}"))
+
+
+def _build_compound_rule(direction: str, n_conditions: int = None) -> Node:
+    """Build a compound boolean rule from random categories."""
+    if n_conditions is None:
+        n_conditions = random.randint(2, 5)
+
+    cats = list(CATEGORY_WEIGHTS.keys())
+    weights = list(CATEGORY_WEIGHTS.values())
+    chosen = random.choices(cats, weights=weights, k=n_conditions)
+
+    nodes = [_generate_category_condition(cat, direction) for cat in chosen]
+
+    # Join with AND (biased 2:1 over OR)
+    tree = nodes[0]
+    for node in nodes[1:]:
+        op = "AND" if random.random() < 0.67 else "OR"
+        tree = BooleanNode(operator=op, left=tree, right=node)
+    return tree
+
+
+def _rand_risk():
+    trail = round(random.choice([0.0, 0.0, 0.0, random.uniform(1.5, 3.0)]), 1)
+    tp1 = round(random.choice([0.0, 0.0, 0.0, random.uniform(0.3, 0.6)]), 2)
+    return RiskParams(
+        sl_atr_mult=round(random.uniform(1.0, 2.0), 1),
+        rr_ratio=round(random.uniform(2.0, 4.0), 1),
+        risk_pct=round(random.uniform(0.005, 0.015), 3),
+        cooldown=random.randint(4, 8),
+        trail_mult=trail,
+        tp1_ratio=tp1,
+    )
+
+
+# ── Legacy tree-based generation (kept for GA compatibility) ──────────────
 
 def _random_leaf(allow_constant: bool = True) -> Node:
-    """Generate a random leaf node."""
+    tf = _pick_tf()
     if allow_constant and random.random() < 0.3:
-        # Bounded indicator vs constant
         ind = random.choice(_BOUNDED_INDICATORS)
         lo, hi = _BOUNDED_RANGES[ind]
         return ConstantNode(value=round(random.uniform(lo, hi), 1))
-    return IndicatorNode(column=random.choice(_CROSS_INDICATORS))
+    col = random.choice(_CROSS_INDICATORS)
+    return IndicatorNode(column=f"{tf}{col}")
 
 
 def _random_comparison() -> ComparisonNode:
-    """Generate a random comparison node."""
+    tf = _pick_tf()
     if random.random() < 0.5:
-        # Indicator vs indicator
-        left = IndicatorNode(column=random.choice(_CROSS_INDICATORS))
-        right = IndicatorNode(column=random.choice(_CROSS_INDICATORS))
+        left = IndicatorNode(column=f"{tf}{random.choice(_CROSS_INDICATORS)}")
+        right = IndicatorNode(column=f"{tf}{random.choice(_CROSS_INDICATORS)}")
         op = random.choice(_COMPARISON_OPS)
     else:
-        # Bounded indicator vs constant
         ind = random.choice(_BOUNDED_INDICATORS)
         lo, hi = _BOUNDED_RANGES[ind]
-        left = IndicatorNode(column=ind)
+        left = IndicatorNode(column=f"{tf}{ind}")
         right = ConstantNode(value=round(random.uniform(lo, hi), 1))
         op = random.choice([">", "<", ">=", "<="])
     return ComparisonNode(operator=op, left=left, right=right)
 
 
 def _random_tree(max_depth: int = MAX_TREE_DEPTH, current_depth: int = 0) -> Node:
-    """Recursively generate a random expression tree."""
     if current_depth >= max_depth or (current_depth > 1 and random.random() < 0.4):
         return _random_comparison()
-
     left = _random_tree(max_depth, current_depth + 1)
     right = _random_tree(max_depth, current_depth + 1)
-    return BooleanNode(
-        operator="AND",
-        left=left, right=right,
-    )
+    return BooleanNode(operator="AND", left=left, right=right)
 
 
 def generate_random_strategy() -> Strategy:
-    """Generate a completely random strategy."""
-    depth = random.randint(2, MAX_TREE_DEPTH)
-    buy_rule = _random_tree(depth)
-    sell_rule = _random_tree(depth)
-    risk = RiskParams(
-        sl_atr_mult=round(random.uniform(1.0, 2.0), 1),
-        rr_ratio=round(random.uniform(2.0, 4.0), 1),
-        risk_pct=round(random.uniform(0.005, 0.015), 3),
-        cooldown=random.randint(4, 8),
-    )
-    return Strategy(origin="random", buy_rule=buy_rule,
-                    sell_rule=sell_rule, risk_params=risk)
+    """Generate a strategy using the expanded category-based generator."""
+    buy_rule = _build_compound_rule("buy")
+    sell_rule = _build_compound_rule("sell")
+    return Strategy(origin="random", buy_rule=buy_rule, sell_rule=sell_rule, risk_params=_rand_risk())
 
+
+def generate_from_params(params: list) -> Strategy:
+    """Generate a strategy from a Bayesian-suggested parameter vector."""
+    risk = RiskParams(
+        sl_atr_mult=round(params[0], 1),
+        rr_ratio=round(params[1], 1),
+        risk_pct=round(params[2], 3),
+        cooldown=int(round(params[3])),
+        trail_mult=round(params[4], 1),
+        tp1_ratio=round(params[5], 2),
+    )
+    buy_rule = _build_compound_rule("buy")
+    sell_rule = _build_compound_rule("sell")
+    return Strategy(origin="bayesian", buy_rule=buy_rule, sell_rule=sell_rule, risk_params=risk)
+
+
+# ── Batch generation ──────────────────────────────────────────────────────
+
+from backend.strategy.templates import generate_from_template
 
 def generate_batch(
     ga_offspring: List[Strategy] = None,
     batch_size: int = BATCH_SIZE,
+    bayesian_suggestions: List[list] = None,
 ) -> List[Strategy]:
-    """
-    Generate a batch of strategies with a mix of:
-    - Random strategies
-    - Template-based strategies
-    - GA offspring (if provided)
-    """
+    """Generate a batch with mix of random, template, GA, and Bayesian strategies."""
     strategies = []
-    n_random = int(batch_size * RANDOM_RATIO)
-    n_template = int(batch_size * TEMPLATE_RATIO)
-    n_ga = batch_size - n_random - n_template
 
-    # Random
-    for _ in range(n_random):
-        strategies.append(generate_random_strategy())
-
-    # Template
-    for _ in range(n_template):
-        strategies.append(generate_from_template())
+    # Bayesian suggestions first
+    if bayesian_suggestions:
+        for params in bayesian_suggestions:
+            try:
+                strategies.append(generate_from_params(params))
+            except Exception:
+                pass
 
     # GA offspring
     if ga_offspring:
-        strategies.extend(ga_offspring[:n_ga])
-    else:
-        # Fill with more templates if no GA offspring
-        for _ in range(n_ga):
-            strategies.append(generate_from_template())
+        strategies.extend(ga_offspring[:int(batch_size * GA_RATIO)])
 
-    log.info(f"Generated batch: {n_random} random, {n_template} template, "
-             f"{len(strategies) - n_random - n_template} GA/template")
-    return strategies
+    remaining = batch_size - len(strategies)
+    if remaining <= 0:
+        log.info(f"Generated batch: {len(strategies)} total")
+        return strategies[:batch_size]
+
+    n_random = max(1, int(remaining * (RANDOM_RATIO / (RANDOM_RATIO + TEMPLATE_RATIO))))
+    n_template = remaining - n_random
+
+    for _ in range(n_random):
+        strategies.append(generate_random_strategy())
+    for _ in range(n_template):
+        strategies.append(generate_from_template())
+
+    log.info(f"Generated batch: {n_random} random, {n_template} template, {len(ga_offspring or [])} GA, {len(bayesian_suggestions or [])} bayesian")
+    return strategies[:batch_size]
+
+
+def record_category_stats(db, strategy: Strategy, is_top20: bool = False):
+    """Record which categories appear in a strategy's conditions for weight adaptation."""
+    try:
+        if hasattr(db, '_fallback') and db._fallback:
+            return
+        nodes = []
+        if strategy.buy_rule:
+            nodes.extend(strategy.buy_rule.collect_nodes())
+        if strategy.sell_rule:
+            nodes.extend(strategy.sell_rule.collect_nodes())
+
+        seen = set()
+        for node in nodes:
+            if isinstance(node, IndicatorNode):
+                col = node.column
+                for cat in CATEGORY_WEIGHTS:
+                    if cat.replace("_", "") in col.replace("_", ""):
+                        seen.add(cat)
+
+        for cat in seen:
+            update = {"$inc": {"appearances_total": 1}}
+            if is_top20:
+                update["$inc"]["appearances_top20"] = 1
+            db.db.category_stats.update_one(
+                {"category": cat}, update, upsert=True
+            )
+    except Exception:
+        pass

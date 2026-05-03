@@ -238,9 +238,18 @@ class RiskParams:
     rr_ratio: float = 2.0
     risk_pct: float = 0.01
     cooldown: int = 3
+    trail_mult: float = 0.0    # 0 = no trailing stop
+    tp1_ratio: float = 0.0     # 0 = no partial exit, 0.5 = take half at 50% of TP distance
 
     def to_dict(self):
         return asdict(self)
+
+    def param_vector(self) -> list:
+        """Return 6-feature parameter vector for Bayesian optimizer."""
+        return [
+            self.sl_atr_mult, self.rr_ratio, self.risk_pct,
+            self.cooldown, self.trail_mult, self.tp1_ratio,
+        ]
 
 
 @dataclass
@@ -300,7 +309,8 @@ class Strategy:
             f"  BUY:  {buy_str}\n"
             f"  SELL: {sell_str}\n"
             f"  RISK: SL={self.risk_params.sl_atr_mult}×ATR, "
-            f"RR={self.risk_params.rr_ratio}, risk={self.risk_params.risk_pct*100}%"
+            f"RR={self.risk_params.rr_ratio}, risk={self.risk_params.risk_pct*100}%, "
+            f"trail={self.risk_params.trail_mult}, tp1={self.risk_params.tp1_ratio}"
         )
 
     def copy(self):

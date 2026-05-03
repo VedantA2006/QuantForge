@@ -1,6 +1,5 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  QuantForge — Genetic Algorithm Optimizer                   ║
-# ║  Evolves strategies via tournament, crossover, mutation     ║
+# ║  QuantForge — Genetic Algorithm + Bayesian Optimizer        ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 import copy
@@ -27,25 +26,20 @@ log = logging.getLogger("quantforge.engine.optimizer")
 
 
 # ═══════════════════════════════════════════════════════════════
-#  SELECTION
+#  GA — SELECTION
 # ═══════════════════════════════════════════════════════════════
 
-def tournament_select(
-    population: List[Tuple[Strategy, float]],
-    k: int = GA_TOURNAMENT_K,
-) -> Strategy:
-    """Tournament selection: pick k random, return the fittest."""
+def tournament_select(population: List[Tuple[Strategy, float]], k: int = GA_TOURNAMENT_K) -> Strategy:
     contestants = random.sample(population, min(k, len(population)))
     winner = max(contestants, key=lambda x: x[1])
     return winner[0].copy()
 
 
 # ═══════════════════════════════════════════════════════════════
-#  CROSSOVER
+#  GA — CROSSOVER
 # ═══════════════════════════════════════════════════════════════
 
 def _get_random_subtree_parent(node: Node) -> Optional[Tuple[Node, str]]:
-    """Find a random internal node and which child to swap."""
     candidates = []
     _collect_internal(node, candidates)
     if not candidates:
@@ -55,7 +49,6 @@ def _get_random_subtree_parent(node: Node) -> Optional[Tuple[Node, str]]:
 
 
 def _collect_internal(node: Node, acc: list, parent=None, attr=None):
-    """Collect all (parent, child_attr) pairs for internal nodes."""
     if isinstance(node, (BooleanNode, ComparisonNode, ArithmeticNode)):
         if parent is not None:
             acc.append((parent, attr))
@@ -66,23 +59,17 @@ def _collect_internal(node: Node, acc: list, parent=None, attr=None):
 
 
 def _get_random_subtree(node: Node) -> Optional[Node]:
-    """Get a random subtree from the tree."""
     all_nodes = node.collect_nodes()
     if len(all_nodes) <= 1:
         return node.copy()
-    return random.choice(all_nodes[1:]).copy()  # skip root
+    return random.choice(all_nodes[1:]).copy()
 
 
 def crossover(parent_a: Strategy, parent_b: Strategy) -> Strategy:
-    """
-    Subtree crossover: swap a random subtree between two parents.
-    Risk params come from the fitter parent (parent_a assumed fitter).
-    """
     child = parent_a.copy()
     child.origin = "crossover"
     child.generation = max(parent_a.generation, parent_b.generation) + 1
 
-    # Decide which rule to crossover
     if random.random() < 0.5 and child.buy_rule and parent_b.buy_rule:
         target_rule = "buy_rule"
         donor_tree = parent_b.buy_rule
@@ -90,53 +77,38 @@ def crossover(parent_a: Strategy, parent_b: Strategy) -> Strategy:
         target_rule = "sell_rule"
         donor_tree = parent_b.sell_rule
     else:
-        return child  # can't crossover
+        return child
 
     child_tree = getattr(child, target_rule)
     if child_tree is None or donor_tree is None:
         return child
 
-    # Get a subtree from donor
     donor_sub = _get_random_subtree(donor_tree)
     if donor_sub is None:
         return child
 
-    # Find a swap point in child
     result = _get_random_subtree_parent(child_tree)
     if result is None:
-        # Replace entire rule
         setattr(child, target_rule, donor_sub)
     else:
         parent_node, attr = result
         setattr(parent_node, attr, donor_sub)
 
-    # Small perturbation to risk params
     child.risk_params = _perturb_risk(parent_a.risk_params)
     child.strategy_id = child.strategy_id[:4] + "x" + parent_b.strategy_id[:3]
     child.name = f"cross_{child.strategy_id}"
-
     return child
 
 
 # ═══════════════════════════════════════════════════════════════
-#  MUTATION
+#  GA — MUTATION
 # ═══════════════════════════════════════════════════════════════
 
 def mutate(strategy: Strategy) -> Strategy:
-    """
-    Apply one or more mutations to a strategy.
-    Mutation types:
-    1. Indicator swap
-    2. Operator swap
-    3. Constant perturbation
-    4. Subtree regrow
-    5. Parameter mutation
-    """
     child = strategy.copy()
     child.origin = "mutation"
     child.generation += 1
 
-    # Pick which rule to mutate
     if random.random() < 0.5 and child.buy_rule:
         rule = child.buy_rule
     elif child.sell_rule:
@@ -151,30 +123,25 @@ def mutate(strategy: Strategy) -> Strategy:
     target = random.choice(nodes)
     mutation_type = random.choices(
         ["indicator", "operator", "constant", "regrow", "param"],
-        weights=[0.25, 0.20, 0.25, 0.15, 0.15],
-        k=1,
+        weights=[0.25, 0.20, 0.25, 0.15, 0.15], k=1,
     )[0]
 
     if mutation_type == "indicator" and isinstance(target, IndicatorNode):
         target.column = random.choice(_CROSS_INDICATORS)
-
     elif mutation_type == "operator":
         if isinstance(target, ComparisonNode):
             target.operator = random.choice(_COMPARISON_OPS)
         elif isinstance(target, BooleanNode):
             target.operator = random.choice(_BOOLEAN_OPS)
-
     elif mutation_type == "constant" and isinstance(target, ConstantNode):
         noise = random.gauss(0, target.value * 0.15) if target.value != 0 else random.gauss(0, 5)
         target.value = round(target.value + noise, 2)
         target.value = max(0, min(target.value, 100))
-
     elif mutation_type == "regrow":
         result = _get_random_subtree_parent(rule)
         if result:
             parent_node, attr = result
             setattr(parent_node, attr, _random_comparison())
-
     elif mutation_type == "param":
         child.risk_params = _perturb_risk(child.risk_params)
 
@@ -183,54 +150,37 @@ def mutate(strategy: Strategy) -> Strategy:
 
 
 def _perturb_risk(params: RiskParams) -> RiskParams:
-    """Small gaussian perturbation to risk parameters."""
     return RiskParams(
         sl_atr_mult=round(max(1.0, min(2.0, params.sl_atr_mult + random.gauss(0, 0.15))), 1),
         rr_ratio=round(max(2.0, min(5.0, params.rr_ratio + random.gauss(0, 0.2))), 1),
         risk_pct=round(max(0.005, min(0.015, params.risk_pct + random.gauss(0, 0.001))), 3),
         cooldown=max(4, min(10, params.cooldown + random.choice([-1, 0, 0, 1]))),
+        trail_mult=round(max(0, min(4.0, params.trail_mult + random.gauss(0, 0.3))), 1),
+        tp1_ratio=round(max(0, min(0.7, params.tp1_ratio + random.gauss(0, 0.05))), 2),
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-#  EVOLUTION LOOP
+#  GA — EVOLUTION (single generation)
 # ═══════════════════════════════════════════════════════════════
 
 def evolve_population(
     population_with_fitness: List[Tuple[Strategy, float]],
     pop_size: int = GA_POPULATION_SIZE,
 ) -> List[Strategy]:
-    """
-    Run genetic algorithm evolution for one generation.
-
-    Args:
-        population_with_fitness: List of (Strategy, fitness_score) tuples
-        pop_size: Target population size
-
-    Returns:
-        List of offspring strategies ready for evaluation
-    """
     if len(population_with_fitness) < 4:
         log.warning("Population too small for GA evolution")
         return []
 
-    # Sort by fitness
     pop = sorted(population_with_fitness, key=lambda x: x[1], reverse=True)
-
-    log.info(
-        f"[GA] Evolution: pop={len(pop)}, "
-        f"best_fitness={pop[0][1]:.4f}"
-    )
+    log.info(f"[GA] Evolution: pop={len(pop)}, best_fitness={pop[0][1]:.4f}")
 
     next_gen = []
-
-    # Elitism: carry top performers unchanged
     for i in range(min(GA_ELITISM_COUNT, len(pop))):
         elite = pop[i][0].copy()
         elite.origin = "elite"
         next_gen.append(elite)
 
-    # Fill rest with crossover + mutation
     while len(next_gen) < pop_size:
         if random.random() < GA_CROSSOVER_RATE and len(pop) >= 2:
             p1 = tournament_select(pop)
@@ -240,17 +190,116 @@ def evolve_population(
             parent = tournament_select(pop)
             child = parent.copy()
 
-        # Mutation
         if random.random() < GA_MUTATION_RATE:
             child = mutate(child)
         elif random.random() < GA_PARAM_MUTATION_RATE:
             child.risk_params = _perturb_risk(child.risk_params)
 
-        # We assume parents had generation set, so we increment
-        child.generation = max(p1.generation if 'p1' in locals() else child.generation, getattr(child, 'generation', 0)) + 1
+        child.generation += 1
         next_gen.append(child)
 
-    # Return final generation offspring (excluding elites already stored)
     offspring = next_gen[GA_ELITISM_COUNT:]
     log.info(f"[GA] Produced {len(offspring)} offspring")
     return offspring
+
+
+# ═══════════════════════════════════════════════════════════════
+#  BAYESIAN OPTIMIZER (GP-UCB)
+# ═══════════════════════════════════════════════════════════════
+
+class BayesianOptimizer:
+    """Gaussian Process Bayesian optimizer for risk parameter tuning."""
+
+    # Parameter bounds: [sl_atr_mult, rr_ratio, risk_pct, cooldown, trail_mult, tp1_ratio]
+    BOUNDS = np.array([
+        [1.0, 2.0],   # sl_atr_mult
+        [2.0, 5.0],   # rr_ratio
+        [0.005, 0.015],# risk_pct
+        [4, 10],       # cooldown
+        [0.0, 3.0],   # trail_mult
+        [0.0, 0.6],   # tp1_ratio
+    ])
+
+    def __init__(self):
+        self._history: Dict[str, List[Tuple[np.ndarray, float]]] = {}
+        self._gp_model: Dict[str, object] = {}
+        self._fit_count: Dict[str, int] = {}
+        self._gp_available = False
+        try:
+            from sklearn.gaussian_process import GaussianProcessRegressor
+            from sklearn.gaussian_process.kernels import Matern
+            self._gp_available = True
+        except ImportError:
+            log.warning("sklearn not installed — Bayesian optimizer disabled")
+
+    def record(self, asset: str, params_vector: list, score: float):
+        """Record an observation."""
+        if asset not in self._history:
+            self._history[asset] = []
+            self._fit_count[asset] = 0
+        self._history[asset].append((np.array(params_vector[:6]), score))
+
+    def suggest(self, asset: str, n: int = 5) -> List[list]:
+        """Suggest n parameter vectors using GP-UCB acquisition."""
+        if not self._gp_available:
+            return self._random_suggestions(n)
+
+        history = self._history.get(asset, [])
+        if len(history) < 30:
+            return self._random_suggestions(n)
+
+        # Fit or refit GP
+        count_since_fit = len(history) - self._fit_count.get(asset, 0)
+        if asset not in self._gp_model or count_since_fit >= 25:
+            self._fit_gp(asset)
+
+        gp = self._gp_model.get(asset)
+        if gp is None:
+            return self._random_suggestions(n)
+
+        # UCB acquisition over random candidates
+        candidates = self._random_candidates(500)
+        try:
+            mean, std = gp.predict(candidates, return_std=True)
+            ucb = mean + 2.0 * std
+            top_idx = np.argsort(ucb)[-n:][::-1]
+            suggestions = [candidates[i].tolist() for i in top_idx]
+            log.info(f"[BAYES] Suggested {n} candidates (best UCB={ucb[top_idx[0]]:.4f})")
+            return suggestions
+        except Exception as e:
+            log.warning(f"[BAYES] Prediction failed: {e}")
+            return self._random_suggestions(n)
+
+    def _fit_gp(self, asset: str):
+        try:
+            from sklearn.gaussian_process import GaussianProcessRegressor
+            from sklearn.gaussian_process.kernels import Matern
+
+            history = self._history[asset]
+            X = np.array([h[0] for h in history])
+            y = np.array([h[1] for h in history])
+
+            # Normalize
+            X_norm = (X - self.BOUNDS[:, 0]) / (self.BOUNDS[:, 1] - self.BOUNDS[:, 0])
+
+            kernel = Matern(nu=2.5)
+            gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=2, alpha=0.01)
+            gp.fit(X_norm, y)
+            self._gp_model[asset] = gp
+            self._fit_count[asset] = len(history)
+            log.info(f"[BAYES] GP fitted on {len(history)} observations for {asset}")
+        except Exception as e:
+            log.warning(f"[BAYES] GP fit failed: {e}")
+
+    def _random_candidates(self, n: int) -> np.ndarray:
+        candidates = np.random.uniform(0, 1, size=(n, len(self.BOUNDS)))
+        return candidates
+
+    def _random_suggestions(self, n: int) -> List[list]:
+        suggestions = []
+        for _ in range(n):
+            params = []
+            for lo, hi in self.BOUNDS:
+                params.append(round(random.uniform(lo, hi), 3))
+            suggestions.append(params)
+        return suggestions
