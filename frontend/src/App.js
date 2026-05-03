@@ -7,7 +7,7 @@ import './App.css';
 ChartJS.register(CategoryScale, LinearScale, PointElement,
   LineElement, Filler, Tooltip, Legend);
 
-const API = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API = process.env.REACT_APP_API_URL || '';
 
 /* ═══════════════════════════════════════════════════════════════
    STATUS BAR
