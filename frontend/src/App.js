@@ -301,6 +301,7 @@ function App() {
   const [metrics, setMetrics] = useState({});
   const [strategies, setStrategies] = useState([]);
   const [highWRStrategies, setHighWRStrategies] = useState([]);
+  const [hofStrategies, setHofStrategies] = useState([]);
   const [logs, setLogs] = useState([]);
   const [selectedStrategy, setSelectedStrategy] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -319,7 +320,9 @@ function App() {
       setStrategies(bestRes.strategies || []);
       setLogs(logsRes.logs || []);
       
-      const elite = (hofRes.strategies || []).filter(s => (s.metrics?.win_rate || 0) >= 70);
+      const allHof = hofRes.strategies || [];
+      setHofStrategies(allHof);
+      const elite = allHof.filter(s => (s.metrics?.win_rate || 0) >= 70);
       setHighWRStrategies(elite);
 
       // Auto-select best if none selected
@@ -508,6 +511,26 @@ function App() {
             <div className="panel-body">
               <Leaderboard
                 strategies={highWRStrategies}
+                onSelect={setSelectedStrategy}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Hall of Fame Strategies */}
+        {hofStrategies.length > 0 && (
+          <div className="panel chart-section">
+            <div className="panel-header" style={{ borderBottomColor: 'rgba(99, 130, 255, 0.2)' }}>
+              <div className="panel-title" style={{ color: 'var(--accent-blue)' }}>
+                🏛️ Hall of Fame Strategies
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {hofStrategies.length} enshrined
+              </div>
+            </div>
+            <div className="panel-body">
+              <Leaderboard
+                strategies={hofStrategies}
                 onSelect={setSelectedStrategy}
               />
             </div>
