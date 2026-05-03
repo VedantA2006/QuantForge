@@ -49,7 +49,8 @@ class BacktestResult:
     regime_sideways_wr: float = 0.0
 
     def to_dict(self):
-        return asdict(self)
+        from backend.utils import clean_for_mongo
+        return clean_for_mongo(asdict(self))
 
     @property
     def is_valid(self) -> bool:

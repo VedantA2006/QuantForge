@@ -29,7 +29,8 @@ class Node:
         raise NotImplementedError
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        from backend.utils import clean_for_mongo
+        return clean_for_mongo(asdict(self))
 
     def depth(self) -> int:
         return 1

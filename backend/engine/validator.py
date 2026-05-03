@@ -31,7 +31,8 @@ class ValidationResult:
     walk_forward_ratio: float = 0.0
 
     def to_dict(self):
-        return {
+        from backend.utils import clean_for_mongo
+        return clean_for_mongo({
             "strategy_id": self.strategy_id,
             "passed": self.passed,
             "rejection_reason": self.rejection_reason,
@@ -40,7 +41,7 @@ class ValidationResult:
             "fold_results": self.fold_results,
             "consistency_score": round(self.consistency_score, 4),
             "walk_forward_ratio": round(self.walk_forward_ratio, 4),
-        }
+        })
 
 
 def _monte_carlo_dd(trades: list, n_sims: int = 200) -> float:

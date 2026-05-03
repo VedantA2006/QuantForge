@@ -245,16 +245,18 @@ async def discovery_loop():
 
                 # Check HOF Promotion
                 if check_hof_promotion(r):
+                    from backend.utils import clean_for_mongo
                     strat_dict["is_hof"] = True
+                    hof_doc = clean_for_mongo({
+                        "strategy_id": r.strategy_id,
+                        "rank_score": r.rank_score,
+                        "metrics": r.backtest.to_dict(),
+                        "validation": r.validation.to_dict(),
+                        "strategy": strat_dict,
+                    })
                     db.db.hof_strategies.update_one(
                         {"strategy_id": r.strategy_id},
-                        {"$set": {
-                            "strategy_id": r.strategy_id,
-                            "rank_score": r.rank_score,
-                            "metrics": r.backtest.to_dict(),
-                            "validation": r.validation.to_dict(),
-                            "strategy": strat_dict,
-                        }},
+                        {"$set": hof_doc},
                         upsert=True
                     )
                     log.info(f"[HOF] Strategy {r.strategy_id} promoted — Sharpe={r.backtest.sharpe_ratio:.2f}, Return={r.backtest.total_return_pct:.1f}%, DD={r.backtest.max_drawdown_pct:.1f}%")
