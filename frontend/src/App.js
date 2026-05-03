@@ -91,9 +91,9 @@ function Leaderboard({ strategies, onSelect }) {
                 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
                 {(m.sharpe_ratio || 0).toFixed(2)}
               </td>
-              <td style={{ color: (m.total_return_pct || 0) > 0
+              <td style={{ color: (m.avg_yearly_return || 0) > 0
                 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                {((m.total_return_pct || 0) / 5).toFixed(1)}%
+                {(m.avg_yearly_return || 0).toFixed(1)}%
               </td>
               <td style={{ color: 'var(--accent-red)' }}>
                 {(m.max_drawdown_pct || 0).toFixed(1)}%
@@ -376,8 +376,8 @@ function App() {
         />
         <MetricCard
           label="Best Avg/Yr"
-          value={`${((metrics.best_return || 0) / 5).toFixed(1)}%`}
-          type={(metrics.best_return || 0) > 0 ? 'positive' : 'negative'}
+          value={`${(metrics.best_avg_yearly_return || 0).toFixed(1)}%`}
+          type={(metrics.best_avg_yearly_return || 0) > 0 ? 'positive' : 'negative'}
         />
         <MetricCard
           label="Best DD"

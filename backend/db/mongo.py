@@ -82,6 +82,7 @@ class InMemoryDB:
             "best_score": best.get("rank_score", 0),
             "best_sharpe": best.get("metrics", {}).get("sharpe_ratio", 0),
             "best_return": best.get("metrics", {}).get("total_return_pct", 0),
+            "best_avg_yearly_return": best.get("metrics", {}).get("avg_yearly_return", 0),
             "best_dd": best.get("metrics", {}).get("max_drawdown_pct", 0),
         }
 
@@ -238,6 +239,7 @@ class MongoDB:
                 "best_score": best.get("rank_score", 0) if best else 0,
                 "best_sharpe": best.get("metrics", {}).get("sharpe_ratio", 0) if best else 0,
                 "best_return": best.get("metrics", {}).get("total_return_pct", 0) if best else 0,
+                "best_avg_yearly_return": best.get("metrics", {}).get("avg_yearly_return", 0) if best else 0,
                 "best_dd": best.get("metrics", {}).get("max_drawdown_pct", 0) if best else 0,
             }
         except Exception:

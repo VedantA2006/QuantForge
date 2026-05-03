@@ -36,6 +36,8 @@ class BacktestResult:
     avg_win: float = 0.0
     avg_loss: float = 0.0
     avg_monthly_return: float = 0.0
+    yearly_returns: List[float] = field(default_factory=list)
+    avg_yearly_return: float = 0.0
     trade_history: List[Dict] = field(default_factory=list)
 
     def to_dict(self):
@@ -255,22 +257,24 @@ def _compute_metrics(
     # Avg holding bars
     result.avg_holding_bars = float(np.mean(holding))
 
-    # Monthly returns (approximate)
+    # Periodic returns
     if "datetime" in df.columns:
         try:
-            result.monthly_returns = _calc_monthly_returns(trades, initial_balance, df)
+            result.monthly_returns, result.yearly_returns = _calc_periodic_returns(trades, initial_balance, df)
         except Exception:
             result.monthly_returns = []
+            result.yearly_returns = []
 
     result.avg_monthly_return = round(float(np.mean(result.monthly_returns)), 2) if result.monthly_returns else 0.0
+    result.avg_yearly_return = round(float(np.mean(result.yearly_returns)), 2) if result.yearly_returns else 0.0
 
     return result
 
 
-def _calc_monthly_returns(trades: List[Dict], initial_balance: float, df: pd.DataFrame) -> List[float]:
-    """Calculate true calendar monthly returns from trades."""
+def _calc_periodic_returns(trades: List[Dict], initial_balance: float, df: pd.DataFrame) -> Tuple[List[float], List[float]]:
+    """Calculate true calendar monthly and yearly returns from trades."""
     if "datetime" not in df.columns:
-        return []
+        return [], []
         
     datetimes = pd.to_datetime(df["datetime"])
     daily_dates = datetimes.dt.normalize().unique()
@@ -287,11 +291,11 @@ def _calc_monthly_returns(trades: List[Dict], initial_balance: float, df: pd.Dat
         
     daily_bal = daily_bal.ffill()
     
-    # Use "M" for backwards compatibility, or "ME" for pandas >= 2.2
-    # But since M works in both (with a deprecation warning in 2.2), we'll use M to be safe, 
-    # or just ME with a fallback if older pandas
-    resampler_code = "ME" if pd.__version__ >= "2.2.0" else "M"
-    monthly_bal = daily_bal.resample(resampler_code).last().dropna()
+    resampler_code_m = "ME" if pd.__version__ >= "2.2.0" else "M"
+    resampler_code_y = "YE" if pd.__version__ >= "2.2.0" else "Y"
+    
+    monthly_bal = daily_bal.resample(resampler_code_m).last().dropna()
+    yearly_bal = daily_bal.resample(resampler_code_y).last().dropna()
     
     monthly_returns = []
     prev_bal = initial_balance
@@ -300,4 +304,11 @@ def _calc_monthly_returns(trades: List[Dict], initial_balance: float, df: pd.Dat
         monthly_returns.append(round(ret, 2))
         prev_bal = end_bal
         
-    return monthly_returns
+    yearly_returns = []
+    prev_bal = initial_balance
+    for end_bal in yearly_bal:
+        ret = (end_bal / prev_bal - 1) * 100
+        yearly_returns.append(round(ret, 2))
+        prev_bal = end_bal
+        
+    return monthly_returns, yearly_returns
