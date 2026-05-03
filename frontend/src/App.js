@@ -319,7 +319,7 @@ function App() {
       setMetrics(metricsRes);
       setStrategies(bestRes.strategies || []);
       setLogs(logsRes.logs || []);
-      const allHof = (hofRes.strategies || []).filter(s => (s.metrics?.avg_yearly_return || 0) > 100.0);
+      const allHof = hofRes.strategies || [];
       setHofStrategies(allHof);
       const elite = allHof.filter(s => (s.metrics?.win_rate || 0) >= 70);
       setHighWRStrategies(elite);
