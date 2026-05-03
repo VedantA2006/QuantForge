@@ -25,6 +25,7 @@ def check_hof_promotion(ranked: RankedStrategy) -> bool:
     if bt.max_drawdown_pct > 30.0: return False
     if not (30.0 <= bt.win_rate <= 80.0): return False
     if bt.avg_monthly_return < 1.0: return False
+    if bt.avg_yearly_return <= 100.0: return False
     if val.walk_forward_ratio < 0.50: return False
     if bt.mc_drawdown_p95 > 35.0: return False
     if bt.parameter_sensitivity > 0.40: return False
