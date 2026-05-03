@@ -303,6 +303,7 @@ function App() {
   const [highWRStrategies, setHighWRStrategies] = useState([]);
   const [logs, setLogs] = useState([]);
   const [selectedStrategy, setSelectedStrategy] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
@@ -335,6 +336,25 @@ function App() {
     const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    try {
+      const res = await fetch(`${API}/api/strategy/${searchQuery.trim()}`);
+      if (res.ok) {
+        const strategy = await res.json();
+        setSelectedStrategy(strategy);
+        setSearchQuery('');
+        // Smooth scroll down to details panel
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      } else {
+        alert("Strategy ID not found in database.");
+      }
+    } catch (err) {
+      alert("Error searching for strategy.");
+    }
+  };
 
   const formatUptime = (secs) => {
     if (!secs) return '0s';
@@ -391,7 +411,21 @@ function App() {
             <span>Strategy Discovery Engine</span>
           </h1>
         </div>
-        <StatusBar status={status} />
+        <div className="header-right">
+          <form className="search-form" onSubmit={handleSearch}>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search Strategy ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <button type="submit" className="search-btn">
+              🔍
+            </button>
+          </form>
+          <StatusBar status={status} />
+        </div>
       </header>
 
       {/* ── Metrics Strip ──────────────────────────── */}
