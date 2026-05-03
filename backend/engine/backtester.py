@@ -36,7 +36,7 @@ class BacktestResult:
     avg_win: float = 0.0
     avg_loss: float = 0.0
     avg_monthly_return: float = 0.0
-    yearly_returns: List[float] = field(default_factory=list)
+    yearly_returns: Dict[str, float] = field(default_factory=dict)
     avg_yearly_return: float = 0.0
     trade_history: List[Dict] = field(default_factory=list)
 
@@ -45,7 +45,7 @@ class BacktestResult:
 
     @property
     def is_valid(self) -> bool:
-        return self.total_trades >= 10 and self.max_drawdown_pct < 100
+        return self.total_trades >= 10 and self.total_trades < 1000 and self.max_drawdown_pct < 100
 
 
 def run_backtest(
@@ -266,15 +266,15 @@ def _compute_metrics(
             result.yearly_returns = []
 
     result.avg_monthly_return = round(float(np.mean(result.monthly_returns)), 2) if result.monthly_returns else 0.0
-    result.avg_yearly_return = round(float(np.mean(result.yearly_returns)), 2) if result.yearly_returns else 0.0
+    result.avg_yearly_return = round(float(np.mean(list(result.yearly_returns.values()))), 2) if result.yearly_returns else 0.0
 
     return result
 
 
-def _calc_periodic_returns(trades: List[Dict], initial_balance: float, df: pd.DataFrame) -> Tuple[List[float], List[float]]:
+def _calc_periodic_returns(trades: List[Dict], initial_balance: float, df: pd.DataFrame) -> Tuple[List[float], Dict[str, float]]:
     """Calculate true calendar monthly and yearly returns from trades."""
     if "datetime" not in df.columns:
-        return [], []
+        return [], {}
         
     datetimes = pd.to_datetime(df["datetime"])
     daily_dates = datetimes.dt.normalize().unique()
@@ -304,11 +304,11 @@ def _calc_periodic_returns(trades: List[Dict], initial_balance: float, df: pd.Da
         monthly_returns.append(round(ret, 2))
         prev_bal = end_bal
         
-    yearly_returns = []
+    yearly_returns = {}
     prev_bal = initial_balance
-    for end_bal in yearly_bal:
+    for date, end_bal in yearly_bal.items():
         ret = (end_bal / prev_bal - 1) * 100
-        yearly_returns.append(round(ret, 2))
+        yearly_returns[str(date.year)] = round(ret, 2)
         prev_bal = end_bal
         
     return monthly_returns, yearly_returns

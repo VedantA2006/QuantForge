@@ -188,7 +188,7 @@ def _perturb_risk(params: RiskParams) -> RiskParams:
         sl_atr_mult=round(max(1.0, min(2.0, params.sl_atr_mult + random.gauss(0, 0.15))), 1),
         rr_ratio=round(max(2.0, min(5.0, params.rr_ratio + random.gauss(0, 0.2))), 1),
         risk_pct=round(max(0.005, min(0.015, params.risk_pct + random.gauss(0, 0.001))), 3),
-        cooldown=max(2, min(6, params.cooldown + random.choice([-1, 0, 0, 1]))),
+        cooldown=max(4, min(10, params.cooldown + random.choice([-1, 0, 0, 1]))),
     )
 
 

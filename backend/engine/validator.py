@@ -82,6 +82,11 @@ def validate_strategy(
         result.rejection_reason = f"too_few_trades_oos ({oos_result.total_trades})"
         return result
 
+    bars_per_trade = len(df) / max(is_result.total_trades, 1)
+    if bars_per_trade < 20:   # firing more than once per 20 bars is noise
+        result.rejection_reason = f"overtrading ({is_result.total_trades} trades)"
+        return result
+
     if oos_result.profit_factor < 1.0:
         result.rejection_reason = f"oos_pf_below_1 ({oos_result.profit_factor:.2f})"
         return result

@@ -72,7 +72,7 @@ def _random_tree(max_depth: int = MAX_TREE_DEPTH, current_depth: int = 0) -> Nod
     left = _random_tree(max_depth, current_depth + 1)
     right = _random_tree(max_depth, current_depth + 1)
     return BooleanNode(
-        operator=random.choice(_BOOLEAN_OPS),
+        operator="AND",
         left=left, right=right,
     )
 
@@ -86,7 +86,7 @@ def generate_random_strategy() -> Strategy:
         sl_atr_mult=round(random.uniform(1.0, 2.0), 1),
         rr_ratio=round(random.uniform(2.0, 4.0), 1),
         risk_pct=round(random.uniform(0.005, 0.015), 3),
-        cooldown=random.randint(2, 5),
+        cooldown=random.randint(4, 8),
     )
     return Strategy(origin="random", buy_rule=buy_rule,
                     sell_rule=sell_rule, risk_params=risk)
