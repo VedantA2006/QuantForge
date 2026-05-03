@@ -170,18 +170,35 @@ async def get_category_stats():
 @router.get("/strategy/{strategy_id}")
 async def get_strategy(strategy_id: str):
     """Single strategy detail with equity curve."""
+    # Search best_strategies first
     strategies = _db.get_best(50)
     for s in strategies:
         if s.get("strategy_id") == strategy_id:
             return s
+    # Fallback: search HoF and fully_passed collections (MongoDB only)
+    if not (hasattr(_db, '_fallback') and _db._fallback):
+        for collection_name in ("hof_strategies", "fully_passed_strategies"):
+            col = _db.db[collection_name]
+            doc = col.find_one({"strategy_id": strategy_id}, {"_id": 0})
+            if doc:
+                return doc
     return {"error": "Strategy not found"}
 
 
 @router.get("/strategy/{strategy_id}/code")
 async def get_strategy_code(strategy_id: str):
     """Generate standalone Python backtest code for the strategy."""
+    # Search best_strategies first
     strategies = _db.get_best(50)
     strategy_data = next((s for s in strategies if s.get("strategy_id") == strategy_id), None)
+    # Fallback: search HoF and fully_passed collections (MongoDB only)
+    if not strategy_data and not (hasattr(_db, '_fallback') and _db._fallback):
+        for collection_name in ("hof_strategies", "fully_passed_strategies"):
+            col = _db.db[collection_name]
+            doc = col.find_one({"strategy_id": strategy_id}, {"_id": 0})
+            if doc:
+                strategy_data = doc
+                break
     if not strategy_data:
         return {"error": "Strategy not found"}
 

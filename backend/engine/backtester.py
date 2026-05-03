@@ -198,21 +198,12 @@ def run_backtest(
                         exit_price, exit_reason = tp, "TP"
 
             if exit_reason:
-                # Realistic PnL calculation
-                actual_exit = exit_price * (1 - slippage) if side == 1 else exit_price * (1 + slippage)
-
-                if side == 1:
-                    pnl = (actual_exit - entry_price) * qty
-                else:
-                    pnl = (entry_price - actual_exit) * qty
-
-                # Fees on both legs
-                pnl -= (qty * entry_price) * fee
-                pnl -= (qty * actual_exit) * fee
-
-                # Add partial TP pnl if any
-                pnl += position["partial_pnl"]
-                is_win = pnl > 0
+                # Standardized R-multiple PnL (matches download template)
+                is_win = "TP" in exit_reason
+                risk_usd = position["risk_usd"]
+                sl_mult = strategy.risk_params.sl_atr_mult
+                rr = strategy.risk_params.rr_ratio
+                pnl = risk_usd * ((rr * sl_mult) if is_win else -sl_mult) - (risk_usd * fee * 2)
 
                 balance += pnl
                 entry_regime = position.get("entry_regime", 0)
@@ -257,6 +248,7 @@ def run_backtest(
                     "sl": sl_price,
                     "tp": tp_price,
                     "qty": qty,
+                    "risk_usd": risk_usd,
                     "entry_bar": i,
                     "tp1_hit": False,
                     "partial_pnl": 0.0,
