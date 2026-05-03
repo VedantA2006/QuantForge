@@ -1,0 +1,86 @@
+/* ═══════════════════════════════════════════════════════════════
+   QuantForge — Design System
+   Premium dark-mode dashboard with glassmorphism
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Colors ─────────────────────────────────────── */
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #0f1422;
+  --bg-card: rgba(15, 20, 34, 0.85);
+  --bg-card-hover: rgba(20, 28, 50, 0.95);
+  --bg-glass: rgba(15, 20, 40, 0.6);
+  --border: rgba(99, 130, 255, 0.12);
+  --border-active: rgba(99, 130, 255, 0.35);
+
+  --text-primary: #e8ecf4;
+  --text-secondary: #8892a8;
+  --text-muted: #555d70;
+
+  --accent-green: #00e68a;
+  --accent-green-dim: rgba(0, 230, 138, 0.15);
+  --accent-red: #ff4d6a;
+  --accent-red-dim: rgba(255, 77, 106, 0.15);
+  --accent-blue: #6382ff;
+  --accent-blue-dim: rgba(99, 130, 255, 0.15);
+  --accent-purple: #a855f7;
+  --accent-yellow: #fbbf24;
+  --accent-cyan: #22d3ee;
+
+  --gradient-hero: linear-gradient(135deg, #6382ff 0%, #a855f7 50%, #22d3ee 100%);
+  --gradient-card: linear-gradient(145deg, rgba(99,130,255,0.05), rgba(168,85,247,0.03));
+
+  /* ── Typography ─────────────────────────────────── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* ── Spacing ────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Subtle animated gradient background */
+body::before {
+  content: '';
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(ellipse at 20% 50%, rgba(99,130,255,0.06) 0%, transparent 50%),
+              radial-gradient(ellipse at 80% 20%, rgba(168,85,247,0.04) 0%, transparent 50%),
+              radial-gradient(ellipse at 50% 80%, rgba(34,211,238,0.03) 0%, transparent 50%);
+  z-index: -1;
+  animation: bgShift 30s ease-in-out infinite alternate;
+}
+
+@keyframes bgShift {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  100% { transform: translate(-5%, 5%) rotate(3deg); }
+}
+
+/* ── Scrollbar ─────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb {
+  background: rgba(99,130,255,0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(99,130,255,0.5); }

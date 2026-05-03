@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Cache & logs
+backend/cache/*.parquet
+*.log
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
