@@ -7,7 +7,9 @@ import './App.css';
 ChartJS.register(CategoryScale, LinearScale, PointElement,
   LineElement, Filler, Tooltip, Legend);
 
-const API = process.env.REACT_APP_API_URL || '';
+// Force relative path in production so the Node proxy handles it and prevents mixed content errors.
+const isProd = process.env.NODE_ENV === 'production';
+const API = isProd ? '' : (process.env.REACT_APP_API_URL || 'http://localhost:8000');
 
 /* ═══════════════════════════════════════════════════════════════
    STATUS BAR
