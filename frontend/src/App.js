@@ -59,7 +59,7 @@ function Leaderboard({ strategies, onSelect }) {
           <th>ID</th>
           <th>Score</th>
           <th>Sharpe</th>
-          <th>Return</th>
+          <th>Avg/Yr</th>
           <th>DD</th>
           <th>Trades</th>
           <th>WR</th>
@@ -93,7 +93,7 @@ function Leaderboard({ strategies, onSelect }) {
               </td>
               <td style={{ color: (m.total_return_pct || 0) > 0
                 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                {(m.total_return_pct || 0).toFixed(1)}%
+                {((m.total_return_pct || 0) / 5).toFixed(1)}%
               </td>
               <td style={{ color: 'var(--accent-red)' }}>
                 {(m.max_drawdown_pct || 0).toFixed(1)}%
@@ -375,8 +375,8 @@ function App() {
           type={(metrics.best_sharpe || 0) > 0 ? 'positive' : 'negative'}
         />
         <MetricCard
-          label="Best Return"
-          value={`${(metrics.best_return || 0).toFixed(1)}%`}
+          label="Best Avg/Yr"
+          value={`${((metrics.best_return || 0) / 5).toFixed(1)}%`}
           type={(metrics.best_return || 0) > 0 ? 'positive' : 'negative'}
         />
         <MetricCard
