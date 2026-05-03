@@ -325,8 +325,19 @@ def _compute_metrics(
 
     # Sharpe ratio (per-trade returns)
     ret_series = np.diff(eq) / eq[:-1]
+
+    # Compute actual trades per year from data span
+    trades_per_year = 252.0  # fallback: daily
+    if "datetime" in df.columns and len(df) > 1:
+        try:
+            dt = pd.to_datetime(df["datetime"])
+            span_days = (dt.iloc[-1] - dt.iloc[0]).total_seconds() / 86400
+            if span_days > 0:
+                trades_per_year = max(n / (span_days / 365.25), 1.0)
+        except Exception:
+            pass
+
     if len(ret_series) > 1 and np.std(ret_series) > 0:
-        trades_per_year = max(n, 1)
         result.sharpe_ratio = (
             np.mean(ret_series) / np.std(ret_series) * np.sqrt(trades_per_year)
         )
@@ -337,7 +348,7 @@ def _compute_metrics(
     downside = ret_series[ret_series < 0]
     if len(downside) > 0 and np.std(downside) > 0:
         result.sortino_ratio = (
-            np.mean(ret_series) / np.std(downside) * np.sqrt(max(n, 1))
+            np.mean(ret_series) / np.std(downside) * np.sqrt(trades_per_year)
         )
     else:
         result.sortino_ratio = result.sharpe_ratio
@@ -364,6 +375,8 @@ def _compute_metrics(
         regime = t.get("regime", 0)
         if regime == 1:
             regime_trades["bull"].append(t["is_win"])
+        elif regime == -1:
+            regime_trades["bear"].append(t["is_win"])
         else:
             regime_trades["sideways"].append(t["is_win"])
 

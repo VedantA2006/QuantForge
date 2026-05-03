@@ -220,6 +220,13 @@ async def discovery_loop():
             passed_count = len(ranked)
             state["total_passed"] += passed_count
 
+            if ranked:
+                log.info(f"\n--- 🏆 CYCLE {cycle} LEADERBOARD ({len(ranked)} Passed) ---")
+                for i, r in enumerate(ranked[:5]):
+                    log.info(f" #{i+1} | {r.strategy_id} | Score: {r.rank_score:.2f} | Sharpe: {r.backtest.sharpe_ratio:.2f} | Ret: {r.backtest.total_return_pct:.1f}% | WinRate: {r.backtest.win_rate:.1f}%")
+                if len(ranked) > 5:
+                    log.info(f" ... and {len(ranked) - 5} more")
+
             # ── 5. STORE best ─────────────────────────────────
             for idx, r in enumerate(ranked):
                 strat_dict = next(
@@ -270,7 +277,7 @@ async def discovery_loop():
                 bt = r.backtest
                 monthly_avg = sum(bt.monthly_returns) / len(bt.monthly_returns) if bt.monthly_returns else 0.0
 
-                if bt.avg_win >= (1.5 * bt.avg_loss) and monthly_avg >= 3.0 and bt.win_rate >= 35.0:
+                if bt.avg_win >= (1.2 * bt.avg_loss) and monthly_avg >= 1.5 and bt.win_rate >= 30.0:
                     strat_dict = next(
                         (s.to_dict() for s in filtered_strategies if s.strategy_id == r.strategy_id),
                         {}
@@ -377,6 +384,11 @@ async def lifespan(app: FastAPI):
     state["should_run"] = False
     task.cancel()
     strategy_pool.close()
+    try:
+        if hasattr(db, 'close'):
+            db.close()
+    except Exception as e:
+        log.error(f"Error closing db: {e}")
 
 
 app = FastAPI(

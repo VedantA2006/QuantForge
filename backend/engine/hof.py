@@ -21,14 +21,14 @@ def check_hof_promotion(ranked: RankedStrategy) -> bool:
     val = ranked.validation
     
     # ── Strict Thresholds ──────────────────────────────────────────────
-    if bt.sharpe_ratio < 1.5: return False
-    if bt.max_drawdown_pct > 12.0: return False
-    if not (35.0 <= bt.win_rate <= 80.0): return False
-    if bt.avg_monthly_return < 2.0: return False
-    if val.walk_forward_ratio < 0.55: return False
-    if bt.mc_drawdown_p95 > 18.0: return False
-    if bt.parameter_sensitivity > 0.25: return False
-    if bt.avg_trades_per_month < 2.0: return False
+    if bt.sharpe_ratio < 1.0: return False
+    if bt.max_drawdown_pct > 30.0: return False
+    if not (30.0 <= bt.win_rate <= 80.0): return False
+    if bt.avg_monthly_return < 1.0: return False
+    if val.walk_forward_ratio < 0.50: return False
+    if bt.mc_drawdown_p95 > 35.0: return False
+    if bt.parameter_sensitivity > 0.40: return False
+    if bt.avg_trades_per_month < 1.5: return False
     
     # ── Walk-forward fold profitability (3 out of 5) ───────────────────
     profitable_folds = 0

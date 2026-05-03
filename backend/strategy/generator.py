@@ -54,6 +54,42 @@ CATEGORY_WEIGHTS = {
     "consec_candles": 4, "wick_bias": 4, "obv_momentum": 5, "willr_extreme": 5,
 }
 
+_CATEGORY_COLUMN_KEYWORDS = {
+    "ema_crossover":    ["ema_8", "ema_13", "ema_21", "ema_34", "ema_55", "ema_89"],
+    "sma_crossover":    ["sma_20", "sma_50"],
+    "ema_vs_sma":       ["ema_", "sma_"],
+    "price_vs_sma":     ["sma_20", "sma_50", "sma_200"],
+    "rsi_thresh":       ["rsi_14"],
+    "rsi_range":        ["rsi_7", "rsi_21"],
+    "rsi_momentum":     ["rsi_14", "rsi_7"],
+    "macd_thresh":      ["macd_line", "macd_signal"],
+    "stoch_thresh":     ["stoch_k"],
+    "stoch_cross":      ["stoch_k", "stoch_d"],
+    "adx_thresh":       ["adx_14"],
+    "bb_crossover":     ["bb_upper", "bb_lower"],
+    "bb_squeeze":       ["bb_width"],
+    "momentum_roc":     ["roc_10"],
+    "candle_struct":    ["is_engulfing"],
+    "volume_profile":   ["volume_ratio"],
+    "volume_spike":     ["volume_ratio"],
+    "price_struct":     ["high_10", "high_20", "low_10", "low_20"],
+    "breakout_nh":      ["high_10", "high_20"],
+    "regime_filter":    ["regime"],
+    "supertrend":       ["supertrend_10_3"],
+    "vwap_dev":         ["vwap_dev"],
+    "cmf":              ["cmf_20"],
+    "williams_r":       ["willr_14"],
+    "willr_extreme":    ["willr_14"],
+    "mfi_thresh":       ["mfi_14"],
+    "cci_thresh":       ["cci_20"],
+    "multi_tf_confirm": ["tf_4h_", "tf_1d_"],
+    "cross_tf_rsi":     ["tf_4h_rsi"],
+    "mean_reversion":   ["bb_lower", "bb_upper", "rsi_14"],
+    "consec_candles":   ["consec_bullish", "consec_bearish"],
+    "wick_bias":        ["wick"],
+    "obv_momentum":     ["obv_slope"],
+}
+
 def update_category_weights(db):
     """Update category weights from MongoDB stats. Categories in top strategies get boosted."""
     try:
@@ -208,9 +244,8 @@ def _generate_category_condition(category: str, direction: str = "buy") -> Compa
         return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}obv_slope_5"), right=ConstantNode(value=0))
 
     elif category == "consec_candles":
-        col = "consec_bullish_2" if is_buy else "consec_bullish_2"
-        expected = 1 if is_buy else 0
-        op = ">=" if is_buy else "<"
+        col = "consec_bullish_2" if is_buy else "consec_bearish_2"
+        op = ">=" if is_buy else ">="
         return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}{col}"), right=ConstantNode(value=0.5))
 
     # fallback — simple EMA comparison
@@ -377,8 +412,8 @@ def record_category_stats(db, strategy: Strategy, rank_score: float, is_top20: b
         for node in nodes:
             if isinstance(node, IndicatorNode):
                 col = node.column
-                for cat in CATEGORY_WEIGHTS:
-                    if cat.replace("_", "") in col.replace("_", ""):
+                for cat, keywords in _CATEGORY_COLUMN_KEYWORDS.items():
+                    if any(kw in col for kw in keywords):
                         seen.add(cat)
 
         for cat in seen:

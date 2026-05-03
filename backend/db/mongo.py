@@ -121,11 +121,14 @@ class MongoDB:
         self.db.fully_passed_strategies.create_index("strategy_id", unique=True)
         self.db.logs.create_index("timestamp")
         # TTL index for auto-cleanup of old logs
-        self.db.logs.create_index(
-            "timestamp",
-            expireAfterSeconds=LOG_TTL_DAYS * 86400,
-            name="log_ttl",
-        )
+        try:
+            self.db.logs.create_index(
+                "timestamp",
+                expireAfterSeconds=LOG_TTL_DAYS * 86400,
+                name="log_ttl",
+            )
+        except Exception:
+            pass
 
     # ── Strategy CRUD ─────────────────────────────────────────────
 

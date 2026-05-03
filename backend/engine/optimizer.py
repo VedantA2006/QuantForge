@@ -305,7 +305,10 @@ class BayesianOptimizer:
             # Unstandardize (optional, but UCB works on normalized scale too)
             ucb = mean_norm + self._beta * std_norm
             top_idx = np.argsort(ucb)[-n:][::-1]
-            suggestions = [candidates[i].tolist() for i in top_idx]
+            # Denormalize back to real parameter space
+            top_candidates_norm = candidates[top_idx]
+            top_candidates_real = self._denormalize(top_candidates_norm)
+            suggestions = [top_candidates_real[i].tolist() for i in range(len(top_idx))]
             log.info(f"[BAYES] Suggested {n} candidates (best UCB={ucb[top_idx[0]]:.4f}, beta={self._beta:.2f})")
             return suggestions
         except Exception as e:
@@ -340,14 +343,16 @@ class BayesianOptimizer:
             log.warning(f"[BAYES] GP fit failed: {e}")
 
     def _random_candidates(self, n: int) -> np.ndarray:
-        candidates = np.random.uniform(0, 1, size=(n, len(self.BOUNDS)))
-        return candidates
+        """Generate n candidates in normalized [0,1] space for GP evaluation."""
+        return np.random.uniform(0, 1, size=(n, len(self.BOUNDS)))
+
+    def _denormalize(self, candidates_norm: np.ndarray) -> np.ndarray:
+        """Convert normalized [0,1] candidates back to real parameter space."""
+        lo = self.BOUNDS[:, 0]
+        hi = self.BOUNDS[:, 1]
+        return candidates_norm * (hi - lo) + lo
 
     def _random_suggestions(self, n: int) -> list:
-        suggestions = []
-        for _ in range(n):
-            params = []
-            for lo, hi in self.BOUNDS:
-                params.append(round(random.uniform(lo, hi), 3))
-            suggestions.append(params)
-        return suggestions
+        candidates_norm = np.random.uniform(0, 1, size=(n, len(self.BOUNDS)))
+        candidates_real = self._denormalize(candidates_norm)
+        return [candidates_real[i].tolist() for i in range(n)]

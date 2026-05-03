@@ -238,9 +238,10 @@ def _compute_tf_indicators(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
         out[f"{prefix}low_{n}"] = l.rolling(n).min()
 
     # ── Regime ─────────────────────────────────────────────────────────────
-    out[f"{prefix}regime"] = (
-        (out[f"{prefix}adx_14"] > 25).fillna(False) & (c > out[f"{prefix}ema_200"]).fillna(False)
-    ).astype(int)
+    adx_trend = (out[f"{prefix}adx_14"] > 25).fillna(False)
+    bull_regime = (adx_trend & (c > out[f"{prefix}ema_200"]).fillna(False)).astype(int)
+    bear_regime = (adx_trend & (c < out[f"{prefix}ema_200"]).fillna(False)).astype(int)
+    out[f"{prefix}regime"] = bull_regime - bear_regime
     out[f"{prefix}ema_200_slope"] = _linear_slope(out[f"{prefix}ema_200"], 5)
 
     # ── Candle structure ───────────────────────────────────────────────────
@@ -257,6 +258,9 @@ def _compute_tf_indicators(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     bull = out[f"{prefix}is_bullish"].astype(bool)
     out[f"{prefix}consec_bullish_2"] = (bull & bull.shift(1).fillna(False)).astype(int)
     out[f"{prefix}consec_bullish_3"] = (bull & bull.shift(1).fillna(False) & bull.shift(2).fillna(False)).astype(int)
+    bear = out[f"{prefix}is_bearish"].astype(bool)
+    out[f"{prefix}consec_bearish_2"] = (bear & bear.shift(1).fillna(False)).astype(int)
+    out[f"{prefix}consec_bearish_3"] = (bear & bear.shift(1).fillna(False) & bear.shift(2).fillna(False)).astype(int)
 
     # Hammer: lower wick > 2x body, upper wick < 0.3x body
     out[f"{prefix}is_hammer"] = (

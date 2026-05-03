@@ -166,20 +166,21 @@ def validate_strategy(
             )
             return result
 
-    # ── Walk-forward folds ────────────────────────────────────────────────
+    # ── Walk-forward folds (over training data only, not full df) ─────────
     fold_sharpes = []
     fold_wrs = []
-    min_train = max(200, n // (n_folds + 1))
-    chunk = (n - min_train) // n_folds
+    n_train = len(train_df)
+    min_train = max(200, n_train // (n_folds + 1))
+    chunk = (n_train - min_train) // n_folds
 
     for fold in range(n_folds):
         tr_end = min_train + chunk * fold
-        te_end = min(tr_end + chunk, n)
-        if tr_end >= n or te_end <= tr_end:
+        te_end = min(tr_end + chunk, n_train)
+        if tr_end >= n_train or te_end <= tr_end:
             break
 
-        fold_train = df.iloc[:tr_end]
-        fold_test = df.iloc[tr_end:te_end]
+        fold_train = train_df.iloc[:tr_end]
+        fold_test = train_df.iloc[tr_end:te_end]
         if len(fold_test) < 30:
             continue
 
