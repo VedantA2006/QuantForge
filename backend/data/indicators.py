@@ -135,6 +135,9 @@ INDICATOR_REGISTRY = {
     "obv": ("obv",),
     # Custom
     "candle_body_ratio": ("candle_body_ratio",),
+    "bb_width": ("bb_width",),
+    "roc_10": ("roc_10",),
+    "regime": ("regime",),
 }
 
 # Columns that strategies can reference
@@ -190,6 +193,15 @@ def compute_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     wick = h - l
     df["candle_body_ratio"] = body / wick.replace(0, np.nan)
     df["candle_body_ratio"] = df["candle_body_ratio"].fillna(0.5)
+
+    # Volatility squeeze — low volatility before big moves
+    df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"]
+
+    # Price rate of change — momentum confirmation  
+    df["roc_10"] = c.pct_change(10) * 100
+
+    # Regime: 1 = trending (ADX > 25 + price above EMA200), 0 = ranging
+    df["regime"] = ((df["adx_14"] > 25) & (c > df["ema_200"])).astype(int)
 
     # ── Warmup NaN handling ────────────────────────────────────────────────
     df = df.iloc[200:].reset_index(drop=True)

@@ -86,6 +86,10 @@ def validate_strategy(
         result.rejection_reason = f"oos_pf_below_1 ({oos_result.profit_factor:.2f})"
         return result
 
+    if oos_result.avg_monthly_return < 0:
+        result.rejection_reason = f"oos_monthly_negative ({oos_result.avg_monthly_return:.2f}%)"
+        return result
+
     # ── Sharpe decay check ────────────────────────────────────────────
     if is_result.sharpe_ratio > 0:
         sharpe_ratio = oos_result.sharpe_ratio / is_result.sharpe_ratio
@@ -118,23 +122,28 @@ def validate_strategy(
         if tr_end >= n or te_end <= tr_end:
             break
 
+        fold_train = df.iloc[:tr_end]
         fold_test = df.iloc[tr_end:te_end]
         if len(fold_test) < 30:
             continue
 
-        fold_result = run_backtest(strategy, fold_test)
-        fold_sharpes.append(fold_result.sharpe_ratio)
-        fold_wrs.append(fold_result.win_rate)
+        is_fold = run_backtest(strategy, fold_train)
+        oos_fold = run_backtest(strategy, fold_test)
+        
+        fold_sharpes.append(oos_fold.sharpe_ratio)
+        fold_wrs.append(oos_fold.win_rate)
 
         result.fold_results.append({
             "fold": fold + 1,
             "train_size": tr_end,
             "test_size": te_end - tr_end,
-            "sharpe": round(fold_result.sharpe_ratio, 4),
-            "win_rate": round(fold_result.win_rate, 2),
-            "pf": round(fold_result.profit_factor, 3),
-            "trades": fold_result.total_trades,
-            "return_pct": round(fold_result.total_return_pct, 2),
+            "is_sharpe": round(is_fold.sharpe_ratio, 4),
+            "oos_sharpe": round(oos_fold.sharpe_ratio, 4),
+            "sharpe": round(oos_fold.sharpe_ratio, 4),
+            "win_rate": round(oos_fold.win_rate, 2),
+            "pf": round(oos_fold.profit_factor, 3),
+            "trades": oos_fold.total_trades,
+            "return_pct": round(oos_fold.total_return_pct, 2),
         })
 
     # ── Win rate consistency check ────────────────────────────────────

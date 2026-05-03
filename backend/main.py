@@ -153,7 +153,7 @@ async def discovery_loop():
             state["total_passed"] += passed_count
 
             # ── 5. STORE best ─────────────────────────────────
-            for r in ranked[:5]:  # store top 5 per cycle
+            for r in ranked:   # store all ranked strategies
                 strat_dict = next(
                     (s.to_dict() for s in strategies
                      if s.strategy_id == r.strategy_id),
@@ -175,7 +175,7 @@ async def discovery_loop():
                 bt = r.backtest
                 monthly_avg = sum(bt.monthly_returns) / len(bt.monthly_returns) if bt.monthly_returns else 0.0
                 
-                if bt.avg_win >= (2.0 * bt.avg_loss) and monthly_avg >= 30.0 and bt.win_rate >= 65.0:
+                if bt.avg_win >= (1.5 * bt.avg_loss) and monthly_avg >= 3.0 and bt.win_rate >= 35.0:
                     db.save_fully_passed({
                         "strategy_id": r.strategy_id,
                         "rank_score": r.rank_score,
@@ -206,7 +206,6 @@ async def discovery_loop():
                     if len(pop_with_fitness) >= 4:
                         ga_offspring = evolve_population(
                             pop_with_fitness,
-                            generations=GA_GENERATIONS,
                         )
                         state["ga_cycles"] += 1
                         log.info(

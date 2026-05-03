@@ -235,12 +235,43 @@ def bb_rsi_reversion_template():
                     buy_rule=buy_rule, sell_rule=sell_rule, risk_params=_rand_risk())
 
 
+def regime_trend_template():
+    strat = random.choice([ema_crossover_template, macd_momentum_template, ema_adx_trend_template, macd_ema_trend_template])()
+    
+    strat.buy_rule = BooleanNode(operator="AND",
+        left=ComparisonNode(operator=">", left=IndicatorNode(column="regime"), right=ConstantNode(value=0.5)),
+        right=strat.buy_rule)
+        
+    strat.sell_rule = BooleanNode(operator="AND",
+        left=ComparisonNode(operator=">", left=IndicatorNode(column="regime"), right=ConstantNode(value=0.5)),
+        right=strat.sell_rule)
+        
+    strat.name = "regime_" + strat.name
+    return strat
+
+
+def regime_reversion_template():
+    strat = random.choice([rsi_mean_reversion_template, bb_rsi_reversion_template, stochastic_template])()
+    
+    strat.buy_rule = BooleanNode(operator="AND",
+        left=ComparisonNode(operator="<", left=IndicatorNode(column="regime"), right=ConstantNode(value=0.5)),
+        right=strat.buy_rule)
+        
+    strat.sell_rule = BooleanNode(operator="AND",
+        left=ComparisonNode(operator="<", left=IndicatorNode(column="regime"), right=ConstantNode(value=0.5)),
+        right=strat.sell_rule)
+        
+    strat.name = "regime_" + strat.name
+    return strat
+
+
 TEMPLATES = [
     ema_crossover_template, rsi_mean_reversion_template,
     bollinger_breakout_template, macd_momentum_template,
     stochastic_template, triple_ema_template,
     ema_adx_trend_template, macd_ema_trend_template,
     bb_rsi_reversion_template,
+    regime_trend_template, regime_reversion_template,
 ]
 
 

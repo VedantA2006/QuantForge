@@ -20,11 +20,12 @@ log = logging.getLogger("quantforge.strategy.generator")
 
 # Indicators suitable for comparison with constants
 _BOUNDED_INDICATORS = [
-    "rsi_7", "rsi_14", "rsi_21", "stoch_k", "stoch_d", "adx_14",
+    "rsi_7", "rsi_14", "rsi_21", "stoch_k", "stoch_d", "adx_14", "bb_width", "roc_10"
 ]
 _BOUNDED_RANGES = {
     "rsi_7": (20, 80), "rsi_14": (20, 80), "rsi_21": (20, 80),
     "stoch_k": (15, 85), "stoch_d": (15, 85), "adx_14": (15, 50),
+    "bb_width": (0.05, 0.25), "roc_10": (-15.0, 15.0),
 }
 # Indicators suitable for cross-comparison
 _CROSS_INDICATORS = [

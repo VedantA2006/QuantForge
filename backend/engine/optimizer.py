@@ -185,10 +185,10 @@ def mutate(strategy: Strategy) -> Strategy:
 def _perturb_risk(params: RiskParams) -> RiskParams:
     """Small gaussian perturbation to risk parameters."""
     return RiskParams(
-        sl_atr_mult=round(max(0.5, params.sl_atr_mult + random.gauss(0, 0.2)), 1),
-        rr_ratio=round(max(1.0, params.rr_ratio + random.gauss(0, 0.3)), 1),
-        risk_pct=round(max(0.003, min(0.03, params.risk_pct + random.gauss(0, 0.002))), 3),
-        cooldown=max(1, min(8, params.cooldown + random.choice([-1, 0, 0, 1]))),
+        sl_atr_mult=round(max(1.0, min(2.0, params.sl_atr_mult + random.gauss(0, 0.15))), 1),
+        rr_ratio=round(max(2.0, min(5.0, params.rr_ratio + random.gauss(0, 0.2))), 1),
+        risk_pct=round(max(0.005, min(0.015, params.risk_pct + random.gauss(0, 0.001))), 3),
+        cooldown=max(2, min(6, params.cooldown + random.choice([-1, 0, 0, 1]))),
     )
 
 
@@ -198,15 +198,13 @@ def _perturb_risk(params: RiskParams) -> RiskParams:
 
 def evolve_population(
     population_with_fitness: List[Tuple[Strategy, float]],
-    generations: int = GA_GENERATIONS,
     pop_size: int = GA_POPULATION_SIZE,
 ) -> List[Strategy]:
     """
-    Run genetic algorithm evolution.
+    Run genetic algorithm evolution for one generation.
 
     Args:
         population_with_fitness: List of (Strategy, fitness_score) tuples
-        generations: Number of generations to evolve
         pop_size: Target population size
 
     Returns:
@@ -220,48 +218,39 @@ def evolve_population(
     pop = sorted(population_with_fitness, key=lambda x: x[1], reverse=True)
 
     log.info(
-        f"[GA] Evolution: pop={len(pop)}, gens={generations}, "
+        f"[GA] Evolution: pop={len(pop)}, "
         f"best_fitness={pop[0][1]:.4f}"
     )
 
-    current_pop = pop
+    next_gen = []
 
-    for gen in range(generations):
-        next_gen = []
+    # Elitism: carry top performers unchanged
+    for i in range(min(GA_ELITISM_COUNT, len(pop))):
+        elite = pop[i][0].copy()
+        elite.origin = "elite"
+        next_gen.append(elite)
 
-        # Elitism: carry top performers unchanged
-        for i in range(min(GA_ELITISM_COUNT, len(current_pop))):
-            elite = current_pop[i][0].copy()
-            elite.origin = "elite"
-            next_gen.append(elite)
+    # Fill rest with crossover + mutation
+    while len(next_gen) < pop_size:
+        if random.random() < GA_CROSSOVER_RATE and len(pop) >= 2:
+            p1 = tournament_select(pop)
+            p2 = tournament_select(pop)
+            child = crossover(p1, p2)
+        else:
+            parent = tournament_select(pop)
+            child = parent.copy()
 
-        # Fill rest with crossover + mutation
-        while len(next_gen) < pop_size:
-            if random.random() < GA_CROSSOVER_RATE and len(current_pop) >= 2:
-                p1 = tournament_select(current_pop)
-                p2 = tournament_select(current_pop)
-                child = crossover(p1, p2)
-            else:
-                parent = tournament_select(current_pop)
-                child = parent.copy()
+        # Mutation
+        if random.random() < GA_MUTATION_RATE:
+            child = mutate(child)
+        elif random.random() < GA_PARAM_MUTATION_RATE:
+            child.risk_params = _perturb_risk(child.risk_params)
 
-            # Mutation
-            if random.random() < GA_MUTATION_RATE:
-                child = mutate(child)
-            elif random.random() < GA_PARAM_MUTATION_RATE:
-                child.risk_params = _perturb_risk(child.risk_params)
-
-            child.generation = gen + 1
-            next_gen.append(child)
-
-        # For the evolution loop we don't re-evaluate here
-        # (that happens in the main discovery loop)
-        # We just track the previous fitness for selection
-        current_pop = [
-            (s, pop[i % len(pop)][1]) for i, s in enumerate(next_gen)
-        ]
+        # We assume parents had generation set, so we increment
+        child.generation = max(p1.generation if 'p1' in locals() else child.generation, getattr(child, 'generation', 0)) + 1
+        next_gen.append(child)
 
     # Return final generation offspring (excluding elites already stored)
-    offspring = [s for s, _ in current_pop[GA_ELITISM_COUNT:]]
+    offspring = next_gen[GA_ELITISM_COUNT:]
     log.info(f"[GA] Produced {len(offspring)} offspring")
     return offspring
