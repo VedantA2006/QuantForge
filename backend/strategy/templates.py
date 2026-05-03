@@ -11,10 +11,10 @@ from backend.strategy.tree import (
 
 def _rand_risk():
     return RiskParams(
-        sl_atr_mult=round(random.uniform(1.0, 3.5), 1),
-        rr_ratio=round(random.uniform(1.5, 4.0), 1),
-        risk_pct=round(random.uniform(0.005, 0.02), 3),
-        cooldown=random.randint(1, 5),
+        sl_atr_mult = round(random.uniform(1.0, 2.0), 1),
+        rr_ratio    = round(random.uniform(2.0, 4.0), 1),
+        risk_pct    = round(random.uniform(0.005, 0.015), 3),
+        cooldown    = random.randint(2, 5),
     )
 
 
@@ -144,10 +144,103 @@ def triple_ema_template():
                     buy_rule=buy_rule, sell_rule=sell_rule, risk_params=_rand_risk())
 
 
+def ema_adx_trend_template():
+    fast = random.choice([8, 13, 21])
+    slow = random.choice([34, 55])
+    adx_thresh = random.randint(25, 35)
+    rsi_thresh = random.randint(52, 62)
+
+    buy_rule = BooleanNode(operator="AND",
+        left=BooleanNode(operator="AND",
+            left=ComparisonNode(operator=">",
+                left=IndicatorNode(column=f"ema_{fast}"),
+                right=IndicatorNode(column=f"ema_{slow}")),
+            right=ComparisonNode(operator=">",
+                left=IndicatorNode(column="adx_14"),
+                right=ConstantNode(value=adx_thresh))),
+        right=ComparisonNode(operator=">",
+            left=IndicatorNode(column="rsi_14"),
+            right=ConstantNode(value=rsi_thresh)))
+
+    sell_rule = BooleanNode(operator="AND",
+        left=BooleanNode(operator="AND",
+            left=ComparisonNode(operator="<",
+                left=IndicatorNode(column=f"ema_{fast}"),
+                right=IndicatorNode(column=f"ema_{slow}")),
+            right=ComparisonNode(operator=">",
+                left=IndicatorNode(column="adx_14"),
+                right=ConstantNode(value=adx_thresh))),
+        right=ComparisonNode(operator="<",
+            left=IndicatorNode(column="rsi_14"),
+            right=ConstantNode(value=100 - rsi_thresh)))
+
+    return Strategy(name=f"ema_adx_{fast}_{slow}", origin="template",
+                    buy_rule=buy_rule, sell_rule=sell_rule, risk_params=_rand_risk())
+
+
+def macd_ema_trend_template():
+    trend_ema = random.choice([89, 200])
+    adx_thresh = random.randint(20, 30)
+
+    buy_rule = BooleanNode(operator="AND",
+        left=BooleanNode(operator="AND",
+            left=ComparisonNode(operator="crossover",
+                left=IndicatorNode(column="macd_line"),
+                right=IndicatorNode(column="macd_signal")),
+            right=ComparisonNode(operator=">",
+                left=IndicatorNode(column="close"),
+                right=IndicatorNode(column=f"ema_{trend_ema}"))),
+        right=ComparisonNode(operator=">",
+            left=IndicatorNode(column="adx_14"),
+            right=ConstantNode(value=adx_thresh)))
+
+    sell_rule = BooleanNode(operator="AND",
+        left=BooleanNode(operator="AND",
+            left=ComparisonNode(operator="crossunder",
+                left=IndicatorNode(column="macd_line"),
+                right=IndicatorNode(column="macd_signal")),
+            right=ComparisonNode(operator="<",
+                left=IndicatorNode(column="close"),
+                right=IndicatorNode(column=f"ema_{trend_ema}"))),
+        right=ComparisonNode(operator=">",
+            left=IndicatorNode(column="adx_14"),
+            right=ConstantNode(value=adx_thresh)))
+
+    return Strategy(name=f"macd_ema_{trend_ema}", origin="template",
+                    buy_rule=buy_rule, sell_rule=sell_rule, risk_params=_rand_risk())
+
+
+def bb_rsi_reversion_template():
+    rsi_ob = random.randint(65, 75)
+    rsi_os = random.randint(25, 35)
+    vol_thresh = round(random.uniform(0.8, 1.2), 1)
+
+    buy_rule = BooleanNode(operator="AND",
+        left=ComparisonNode(operator="<",
+            left=IndicatorNode(column="close"),
+            right=IndicatorNode(column="bb_lower")),
+        right=ComparisonNode(operator="<",
+            left=IndicatorNode(column="rsi_14"),
+            right=ConstantNode(value=rsi_os)))
+
+    sell_rule = BooleanNode(operator="AND",
+        left=ComparisonNode(operator=">",
+            left=IndicatorNode(column="close"),
+            right=IndicatorNode(column="bb_upper")),
+        right=ComparisonNode(operator=">",
+            left=IndicatorNode(column="rsi_14"),
+            right=ConstantNode(value=rsi_ob)))
+
+    return Strategy(name="bb_rsi_reversion", origin="template",
+                    buy_rule=buy_rule, sell_rule=sell_rule, risk_params=_rand_risk())
+
+
 TEMPLATES = [
     ema_crossover_template, rsi_mean_reversion_template,
     bollinger_breakout_template, macd_momentum_template,
     stochastic_template, triple_ema_template,
+    ema_adx_trend_template, macd_ema_trend_template,
+    bb_rsi_reversion_template,
 ]
 
 

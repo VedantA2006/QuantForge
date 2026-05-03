@@ -82,10 +82,10 @@ def generate_random_strategy() -> Strategy:
     buy_rule = _random_tree(depth)
     sell_rule = _random_tree(depth)
     risk = RiskParams(
-        sl_atr_mult=round(random.uniform(1.0, 3.5), 1),
-        rr_ratio=round(random.uniform(1.5, 4.0), 1),
-        risk_pct=round(random.uniform(0.005, 0.02), 3),
-        cooldown=random.randint(1, 5),
+        sl_atr_mult=round(random.uniform(1.0, 2.0), 1),
+        rr_ratio=round(random.uniform(2.0, 4.0), 1),
+        risk_pct=round(random.uniform(0.005, 0.015), 3),
+        cooldown=random.randint(2, 5),
     )
     return Strategy(origin="random", buy_rule=buy_rule,
                     sell_rule=sell_rule, risk_params=risk)

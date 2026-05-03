@@ -21,9 +21,9 @@ CACHE_TTL_HOURS = int(os.getenv("QF_CACHE_TTL_HOURS", "1"))
 # ── Strategy Generation ──────────────────────────────────────────────────────
 BATCH_SIZE = int(os.getenv("QF_BATCH_SIZE", "20"))
 MAX_TREE_DEPTH = int(os.getenv("QF_MAX_TREE_DEPTH", "4"))
-RANDOM_RATIO = 0.4        # 40% random strategies per batch
-TEMPLATE_RATIO = 0.3      # 30% template-based
-GA_RATIO = 0.3             # 30% GA offspring
+RANDOM_RATIO = 0.20        # 20% random strategies per batch
+TEMPLATE_RATIO = 0.50      # 50% template-based
+GA_RATIO = 0.30             # 30% GA offspring
 
 # ── Backtesting ───────────────────────────────────────────────────────────────
 INITIAL_BALANCE = float(os.getenv("QF_INITIAL_BALANCE", "10000"))
@@ -33,14 +33,14 @@ DEFAULT_SLIPPAGE = 0.0001
 COOLDOWN_BARS = int(os.getenv("QF_COOLDOWN_BARS", "3"))
 
 # ── Genetic Algorithm ────────────────────────────────────────────────────────
-GA_POPULATION_SIZE = int(os.getenv("QF_GA_POP_SIZE", "50"))
-GA_GENERATIONS = int(os.getenv("QF_GA_GENERATIONS", "20"))
+GA_POPULATION_SIZE = int(os.getenv("QF_GA_POP_SIZE", "100"))
+GA_GENERATIONS = int(os.getenv("QF_GA_GENERATIONS", "30"))
 GA_TOURNAMENT_K = 3
 GA_CROSSOVER_RATE = 0.7
-GA_MUTATION_RATE = 0.2
-GA_PARAM_MUTATION_RATE = 0.3
-GA_ELITISM_COUNT = 5
-GA_EVOLVE_EVERY_N_CYCLES = int(os.getenv("QF_GA_EVOLVE_EVERY", "5"))
+GA_MUTATION_RATE = 0.15
+GA_PARAM_MUTATION_RATE = 0.2
+GA_ELITISM_COUNT = 10
+GA_EVOLVE_EVERY_N_CYCLES = int(os.getenv("QF_GA_EVOLVE_EVERY", "3"))
 
 # ── Validation ────────────────────────────────────────────────────────────────
 VALIDATION_FOLDS = 5
