@@ -54,63 +54,65 @@ function Leaderboard({ strategies, onSelect }) {
   }
 
   return (
-    <table className="leaderboard-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>ID</th>
-          <th>Score</th>
-          <th>Sharpe</th>
-          <th>Avg/Yr</th>
-          <th>DD</th>
-          <th>Trades</th>
-          <th>WR</th>
-          <th>Avg Mo.</th>
-        </tr>
-      </thead>
-      <tbody>
-        {strategies.map((s, i) => {
-          const m = s.metrics || {};
-          const rankClass = i < 3 ? `rank-${i + 1}` : 'rank-n';
-          return (
-            <tr key={s.strategy_id || i}
-                onClick={() => onSelect && onSelect(s)}
-                style={{ cursor: 'pointer' }}>
-              <td>
-                <span className={`rank-badge ${rankClass}`}>{i + 1}</span>
-              </td>
-              <td style={{ color: 'var(--accent-blue)' }}>
-                {(s.strategy_id || '').slice(0, 8)}
-              </td>
-              <td>
-                <div>{(s.rank_score || 0).toFixed(4)}</div>
-                <div className="score-bar">
-                  <div className="score-bar-fill"
-                       style={{ width: `${(s.rank_score || 0) * 100}%` }} />
-                </div>
-              </td>
-              <td style={{ color: (m.sharpe_ratio || 0) > 0
-                ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                {(m.sharpe_ratio || 0).toFixed(2)}
-              </td>
-              <td style={{ color: (m.avg_yearly_return || 0) > 0
-                ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                {(m.avg_yearly_return || 0).toFixed(1)}%
-              </td>
-              <td style={{ color: 'var(--accent-red)' }}>
-                {(m.max_drawdown_pct || 0).toFixed(1)}%
-              </td>
-              <td>{m.total_trades || 0}</td>
-              <td>{(m.win_rate || 0).toFixed(1)}%</td>
-              <td style={{ color: (m.avg_monthly_return || 0) > 0
-                ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                {(m.avg_monthly_return || 0).toFixed(1)}%
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="leaderboard-wrapper">
+      <table className="leaderboard-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>ID</th>
+            <th>Score</th>
+            <th>Sharpe</th>
+            <th>Avg/Yr</th>
+            <th>DD</th>
+            <th>Trades</th>
+            <th>WR</th>
+            <th>Avg Mo.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {strategies.map((s, i) => {
+            const m = s.metrics || {};
+            const rankClass = i < 3 ? `rank-${i + 1}` : 'rank-n';
+            return (
+              <tr key={s.strategy_id || i}
+                  onClick={() => onSelect && onSelect(s)}
+                  style={{ cursor: 'pointer' }}>
+                <td>
+                  <span className={`rank-badge ${rankClass}`}>{i + 1}</span>
+                </td>
+                <td style={{ color: 'var(--accent-blue)' }}>
+                  {(s.strategy_id || '').slice(0, 8)}
+                </td>
+                <td>
+                  <div>{(s.rank_score || 0).toFixed(4)}</div>
+                  <div className="score-bar">
+                    <div className="score-bar-fill"
+                         style={{ width: `${(s.rank_score || 0) * 100}%` }} />
+                  </div>
+                </td>
+                <td style={{ color: (m.sharpe_ratio || 0) > 0
+                  ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                  {(m.sharpe_ratio || 0).toFixed(2)}
+                </td>
+                <td style={{ color: (m.avg_yearly_return || 0) > 0
+                  ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                  {(m.avg_yearly_return || 0).toFixed(1)}%
+                </td>
+                <td style={{ color: 'var(--accent-red)' }}>
+                  {(m.max_drawdown_pct || 0).toFixed(1)}%
+                </td>
+                <td>{m.total_trades || 0}</td>
+                <td>{(m.win_rate || 0).toFixed(1)}%</td>
+                <td style={{ color: (m.avg_monthly_return || 0) > 0
+                  ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                  {(m.avg_monthly_return || 0).toFixed(1)}%
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

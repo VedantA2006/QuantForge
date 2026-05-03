@@ -432,3 +432,28 @@
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .header { flex-direction: column; gap: 12px; }
 }
+
+@media (max-width: 600px) {
+  .metrics-grid { grid-template-columns: 1fr; }
+  .metric-card { padding: 16px; }
+  .metric-value { font-size: 24px; }
+  .header-left { flex-direction: column; text-align: center; }
+  .header h1 span { display: block; margin: 4px 0 0 0; }
+  
+  .panel-header { flex-direction: column; gap: 12px; align-items: flex-start; }
+  .panel-body { padding: 12px; }
+  
+  /* Make table scrollable horizontally on small screens */
+  .leaderboard-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -12px;
+    padding: 0 12px;
+  }
+  
+  .leaderboard-table th, .leaderboard-table td {
+    padding: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+}
