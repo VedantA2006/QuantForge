@@ -4,7 +4,25 @@
 
 import logging
 from datetime import datetime, timezone, timedelta
+import numpy as np
 from typing import List, Dict, Optional
+
+def clean_dict(d):
+    """Recursively convert numpy types to standard python types for MongoDB insertion."""
+    if isinstance(d, dict):
+        return {k: clean_dict(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [clean_dict(v) for v in d]
+    elif isinstance(d, np.integer):
+        return int(d)
+    elif isinstance(d, np.floating):
+        return float(d)
+    elif isinstance(d, np.bool_):
+        return bool(d)
+    elif isinstance(d, np.ndarray):
+        return clean_dict(d.tolist())
+    else:
+        return d
 
 from backend.config import MONGO_URI, MONGO_DB, LOG_TTL_DAYS, TOP_N_BEST
 
@@ -133,6 +151,7 @@ class MongoDB:
     # ── Strategy CRUD ─────────────────────────────────────────────
 
     def insert_strategy(self, strategy_dict: dict):
+        strategy_dict = clean_dict(strategy_dict)
         if self._fallback:
             return self._fallback.insert_strategy(strategy_dict)
         strategy_dict["created_at"] = datetime.now(timezone.utc)
@@ -145,6 +164,7 @@ class MongoDB:
             log.error(f"Failed to insert strategy: {e}")
 
     def insert_result(self, result_dict: dict):
+        result_dict = clean_dict(result_dict)
         if self._fallback:
             return self._fallback.insert_result(result_dict)
         result_dict["evaluated_at"] = datetime.now(timezone.utc)
@@ -153,14 +173,15 @@ class MongoDB:
         except Exception as e:
             log.error(f"Failed to insert result: {e}")
 
-    def upsert_best(self, best_dict: dict):
+    def upsert_best(self, doc: dict):
+        doc = clean_dict(doc)
         if self._fallback:
-            return self._fallback.upsert_best(best_dict)
-        best_dict["promoted_at"] = datetime.now(timezone.utc)
+            return self._fallback.upsert_best(doc)
+        doc["promoted_at"] = datetime.now(timezone.utc)
         try:
             self.db.best_strategies.replace_one(
-                {"strategy_id": best_dict["strategy_id"]},
-                best_dict, upsert=True,
+                {"strategy_id": doc["strategy_id"]},
+                doc, upsert=True,
             )
             # Keep only top N
             count = self.db.best_strategies.count_documents({})
@@ -172,14 +193,15 @@ class MongoDB:
         except Exception as e:
             log.error(f"Failed to upsert best strategy: {e}")
 
-    def save_fully_passed(self, passed_dict: dict):
+    def save_fully_passed(self, doc: dict):
+        doc = clean_dict(doc)
         if self._fallback:
-            return self._fallback.save_fully_passed(passed_dict)
-        passed_dict["passed_at"] = datetime.now(timezone.utc)
+            return self._fallback.save_fully_passed(doc)
+        doc["passed_at"] = datetime.now(timezone.utc)
         try:
             self.db.fully_passed_strategies.replace_one(
-                {"strategy_id": passed_dict["strategy_id"]},
-                passed_dict, upsert=True,
+                {"strategy_id": doc["strategy_id"]},
+                doc, upsert=True,
             )
         except Exception as e:
             log.error(f"Failed to save fully passed strategy: {e}")
@@ -250,17 +272,16 @@ class MongoDB:
 
     # ── Logging ───────────────────────────────────────────────────
 
-    def insert_log(self, level: str, module: str, message: str,
-                   cycle: int = 0, extra: dict = None):
-        doc = {
+    def insert_log(self, level: str, source: str, message: str, cycle: int = 0, extra: dict = None):
+        doc = clean_dict({
             "timestamp": datetime.now(timezone.utc),
             "level": level,
-            "module": module,
+            "source": source,
             "message": message,
             "cycle": cycle,
-        }
+        })
         if extra:
-            doc.update(extra)
+            doc.update(clean_dict(extra))
         if self._fallback:
             return self._fallback.insert_log(doc)
         try:
