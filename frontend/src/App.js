@@ -120,10 +120,12 @@ function Leaderboard({ strategies, onSelect }) {
    LOG VIEWER
    ═══════════════════════════════════════════════════════════════ */
 function LogViewer({ logs }) {
-  const bottomRef = useRef(null);
+  const containerRef = useRef(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
   }, [logs]);
 
   if (!logs || logs.length === 0) {
@@ -136,7 +138,7 @@ function LogViewer({ logs }) {
   }
 
   return (
-    <div className="log-viewer">
+    <div className="log-viewer" ref={containerRef}>
       {logs.map((log, i) => (
         <div className="log-entry" key={i}
              style={{ animationDelay: `${i * 0.02}s` }}>
@@ -149,7 +151,6 @@ function LogViewer({ logs }) {
           <span className="log-msg">{log.message}</span>
         </div>
       ))}
-      <div ref={bottomRef} />
     </div>
   );
 }
@@ -299,21 +300,26 @@ function App() {
   const [status, setStatus] = useState({});
   const [metrics, setMetrics] = useState({});
   const [strategies, setStrategies] = useState([]);
+  const [highWRStrategies, setHighWRStrategies] = useState([]);
   const [logs, setLogs] = useState([]);
   const [selectedStrategy, setSelectedStrategy] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [statusRes, metricsRes, bestRes, logsRes] = await Promise.all([
+      const [statusRes, metricsRes, bestRes, logsRes, hofRes] = await Promise.all([
         fetch(`${API}/api/status`).then(r => r.json()).catch(() => ({})),
         fetch(`${API}/api/metrics`).then(r => r.json()).catch(() => ({})),
         fetch(`${API}/api/best?limit=15`).then(r => r.json()).catch(() => ({ strategies: [] })),
         fetch(`${API}/api/logs?limit=80`).then(r => r.json()).catch(() => ({ logs: [] })),
+        fetch(`${API}/api/hof?limit=100`).then(r => r.json()).catch(() => ({ strategies: [] })),
       ]);
       setStatus(statusRes);
       setMetrics(metricsRes);
       setStrategies(bestRes.strategies || []);
       setLogs(logsRes.logs || []);
+      
+      const elite = (hofRes.strategies || []).filter(s => (s.metrics?.win_rate || 0) >= 70);
+      setHighWRStrategies(elite);
 
       // Auto-select best if none selected
       if (!selectedStrategy && bestRes.strategies?.length > 0) {
@@ -453,6 +459,26 @@ function App() {
           </div>
           <LogViewer logs={logs} />
         </div>
+
+        {/* Elite Strategies (>70% WR) */}
+        {highWRStrategies.length > 0 && (
+          <div className="panel chart-section">
+            <div className="panel-header" style={{ borderBottomColor: 'rgba(0, 230, 138, 0.2)' }}>
+              <div className="panel-title" style={{ color: 'var(--accent-green)' }}>
+                ⭐ Elite Strategies (70%+ Win Rate)
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {highWRStrategies.length} discovered
+              </div>
+            </div>
+            <div className="panel-body">
+              <Leaderboard
+                strategies={highWRStrategies}
+                onSelect={setSelectedStrategy}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Strategy Details */}
         <div className="panel chart-section">
