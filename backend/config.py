@@ -65,8 +65,21 @@ TOP_N_BEST = int(os.getenv("QF_TOP_N_BEST", "25"))
 # ── API ───────────────────────────────────────────────────────────────────────
 API_HOST = os.getenv("QF_API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("QF_API_PORT", "8000"))
-CORS_ORIGINS = os.getenv("QF_CORS_ORIGINS", "http://localhost:3000").split(",")
+CORS_ORIGINS = os.getenv("QF_CORS_ORIGINS", "http://localhost:3000,*").split(",")
 
 # ── Discovery Loop ────────────────────────────────────────────────────────────
 LOOP_DELAY_SECONDS = int(os.getenv("QF_LOOP_DELAY", "5"))
 MAX_STRATEGIES_STORED = int(os.getenv("QF_MAX_STORED", "500"))
+
+# ── ML Upgrades ───────────────────────────────────────────────────────────────
+SURROGATE_ENABLED = os.getenv("QF_SURROGATE", "true").lower() == "true"
+SURROGATE_FILTER_THRESHOLD = float(os.getenv("QF_SURROGATE_THRESHOLD", "0.5"))
+SURROGATE_MIN_SAMPLES = int(os.getenv("QF_SURROGATE_MIN_SAMPLES", "200"))
+SURROGATE_RETRAIN_EVERY = int(os.getenv("QF_SURROGATE_RETRAIN", "10"))
+RL_ENABLED = os.getenv("QF_RL", "true").lower() == "true"
+RL_BATCH_RATIO = float(os.getenv("QF_RL_RATIO", "0.20"))
+RL_LR = float(os.getenv("QF_RL_LR", "0.01"))
+POOL_ENABLED = os.getenv("QF_POOL", "true").lower() == "true"
+HOF_ENABLED = os.getenv("QF_HOF", "true").lower() == "true"
+PRUNER_ENABLED = os.getenv("QF_PRUNER", "true").lower() == "true"
+PRUNER_MIN_COMPLEXITY = int(os.getenv("QF_PRUNER_MIN_COMPLEXITY", "4"))

@@ -76,6 +76,97 @@ async def get_logs(limit: int = Query(50, ge=1, le=200)):
     return {"logs": logs, "count": len(logs)}
 
 
+@router.get("/hof")
+async def get_hof(limit: int = Query(50, ge=1, le=100)):
+    """Hall of Fame strategies."""
+    if not hasattr(_db, '_fallback') or _db._fallback:
+        return {"strategies": [], "count": 0}
+        
+    strategies = list(_db.db.hof_strategies.find({}, {"_id": 0}).sort("rank_score", -1).limit(limit))
+    for s in strategies:
+        ec = s.get("metrics", {}).get("equity_curve", [])
+        if len(ec) > 200:
+            step = max(1, len(ec) // 200)
+            s["metrics"]["equity_curve"] = ec[::step]
+        if "trade_history" in s.get("metrics", {}):
+            s["metrics"].pop("trade_history", None)
+            
+    return {"strategies": strategies, "count": len(strategies)}
+
+
+@router.get("/surrogate/stats")
+async def get_surrogate_stats():
+    """Surrogate model stats."""
+    import sys
+    # Find surrogate model instance from main module state
+    surrogate_stats = {"is_trained": False, "predictions_made": 0, "strategies_filtered": 0, "training_samples": 0, "mae_last_100": 0.0}
+    try:
+        if "backend.main" in sys.modules:
+            main_mod = sys.modules["backend.main"]
+            if hasattr(main_mod, "surrogate_model"):
+                surrogate = main_mod.surrogate_model
+                surrogate_stats = surrogate.stats
+                surrogate_stats["is_trained"] = surrogate.is_trained
+                if surrogate.stats["predictions_made"] > 0:
+                    surrogate_stats["filter_rate"] = round(surrogate.stats["strategies_filtered"] / surrogate.stats["predictions_made"] * 100, 1)
+                else:
+                    surrogate_stats["filter_rate"] = 0.0
+    except Exception:
+        pass
+    return surrogate_stats
+
+
+@router.get("/rl/stats")
+async def get_rl_stats():
+    """RL agent stats."""
+    import sys
+    rl_stats = {"total_updates": 0, "avg_reward_50": 0.0, "weights_buy": {}, "weights_sell": {}}
+    try:
+        if "backend.main" in sys.modules:
+            main_mod = sys.modules["backend.main"]
+            if hasattr(main_mod, "rl_builder"):
+                rl = main_mod.rl_builder
+                rl_stats["total_updates"] = rl.stats["total_updates"]
+                rl_stats["avg_reward_50"] = round(rl.stats["avg_reward_50"], 4)
+                
+                # Get current favored categories (top 5) for buy and sell based on state * W
+                state = rl._get_state_vector()
+                buy_logits = state @ rl.W_buy
+                sell_logits = state @ rl.W_sell
+                
+                import numpy as np
+                top_buy_idx = np.argsort(buy_logits)[-5:][::-1]
+                top_sell_idx = np.argsort(sell_logits)[-5:][::-1]
+                
+                rl_stats["favored_buy_categories"] = [rl.categories[i] for i in top_buy_idx]
+                rl_stats["favored_sell_categories"] = [rl.categories[i] for i in top_sell_idx]
+    except Exception:
+        pass
+    return rl_stats
+
+
+@router.get("/category/stats")
+async def get_category_stats():
+    """Category weights and stats."""
+    if not hasattr(_db, '_fallback') or _db._fallback:
+        return {"categories": []}
+        
+    stats = list(_db.db.category_stats.find({}, {"_id": 0}))
+    from backend.strategy.generator import CATEGORY_WEIGHTS
+    
+    result = []
+    for s in stats:
+        cat = s.get("category", "")
+        if not cat: continue
+        
+        s["current_weight"] = round(CATEGORY_WEIGHTS.get(cat, 0.0), 4)
+        s["avg_score"] = round(s.get("avg_score", 0.0), 4)
+        result.append(s)
+        
+    result.sort(key=lambda x: x.get("current_weight", 0), reverse=True)
+    return {"categories": result}
+
+
 @router.get("/strategy/{strategy_id}")
 async def get_strategy(strategy_id: str):
     """Single strategy detail with equity curve."""

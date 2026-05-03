@@ -210,37 +210,78 @@ def evolve_population(
 class BayesianOptimizer:
     """Gaussian Process Bayesian optimizer for risk parameter tuning."""
 
-    # Parameter bounds: [sl_atr_mult, rr_ratio, risk_pct, cooldown, trail_mult, tp1_ratio]
+    # Parameter bounds: 6 risk + 8 structural (buy_depth, sell_depth, buy_size, sell_size, n_ema, n_rsi, n_macd, origin)
     BOUNDS = np.array([
-        [1.0, 2.0],   # sl_atr_mult
-        [2.0, 5.0],   # rr_ratio
+        [1.0, 2.0],    # sl_atr_mult
+        [2.0, 5.0],    # rr_ratio
         [0.005, 0.015],# risk_pct
         [4, 10],       # cooldown
-        [0.0, 3.0],   # trail_mult
-        [0.0, 0.6],   # tp1_ratio
+        [0.0, 3.0],    # trail_mult
+        [0.0, 0.6],    # tp1_ratio
+        [0, 10],       # buy_depth
+        [0, 10],       # sell_depth
+        [0, 30],       # buy_size
+        [0, 30],       # sell_size
+        [0, 10],       # n_ema
+        [0, 10],       # n_rsi
+        [0, 10],       # n_macd
+        [0, 5],        # origin
     ])
 
     def __init__(self):
-        self._history: Dict[str, List[Tuple[np.ndarray, float]]] = {}
-        self._gp_model: Dict[str, object] = {}
-        self._fit_count: Dict[str, int] = {}
+        self._history = {}
+        self._gp_model = {}
+        self._fit_count = {}
         self._gp_available = False
+        self._beta = 2.0
         try:
             from sklearn.gaussian_process import GaussianProcessRegressor
-            from sklearn.gaussian_process.kernels import Matern
+            from sklearn.gaussian_process.kernels import Matern, ConstantKernel
             self._gp_available = True
         except ImportError:
             log.warning("sklearn not installed — Bayesian optimizer disabled")
 
-    def record(self, asset: str, params_vector: list, score: float):
+    def load_history(self, db):
+        """Replay history from MongoDB."""
+        try:
+            obs = db.db["gp_observations"].find().sort([("_id", -1)]).limit(5000)
+            for doc in reversed(list(obs)):
+                asset = doc.get("asset", "BTCUSDT")
+                if asset not in self._history:
+                    self._history[asset] = []
+                    self._fit_count[asset] = 0
+                self._history[asset].append((np.array(doc["params"]), doc["score"]))
+            log.info(f"[BAYES] Loaded {sum(len(v) for v in self._history.values())} history observations")
+        except Exception as e:
+            log.warning(f"[BAYES] Failed to load history: {e}")
+
+    def record(self, asset: str, params_vector: list, score: float, db=None):
         """Record an observation."""
         if asset not in self._history:
             self._history[asset] = []
             self._fit_count[asset] = 0
-        self._history[asset].append((np.array(params_vector[:6]), score))
+            
+        # Pad to 14 features if needed
+        full_params = list(params_vector)
+        while len(full_params) < 14:
+            full_params.append(0.0)
+            
+        self._history[asset].append((np.array(full_params[:14]), score))
+        
+        if db:
+            try:
+                db.db["gp_observations"].insert_one({
+                    "asset": asset,
+                    "params": full_params[:14],
+                    "score": score
+                })
+            except Exception:
+                pass
 
-    def suggest(self, asset: str, n: int = 5) -> List[list]:
+    def suggest(self, asset: str, n: int = 5) -> list:
         """Suggest n parameter vectors using GP-UCB acquisition."""
+        self._beta = max(0.1, self._beta - 0.01) # Decay beta
+        
         if not self._gp_available:
             return self._random_suggestions(n)
 
@@ -253,18 +294,19 @@ class BayesianOptimizer:
         if asset not in self._gp_model or count_since_fit >= 25:
             self._fit_gp(asset)
 
-        gp = self._gp_model.get(asset)
+        gp, y_mean, y_std_dev = self._gp_model.get(asset, (None, 0, 1))
         if gp is None:
             return self._random_suggestions(n)
 
         # UCB acquisition over random candidates
-        candidates = self._random_candidates(500)
+        candidates = self._random_candidates(2000)
         try:
-            mean, std = gp.predict(candidates, return_std=True)
-            ucb = mean + 2.0 * std
+            mean_norm, std_norm = gp.predict(candidates, return_std=True)
+            # Unstandardize (optional, but UCB works on normalized scale too)
+            ucb = mean_norm + self._beta * std_norm
             top_idx = np.argsort(ucb)[-n:][::-1]
             suggestions = [candidates[i].tolist() for i in top_idx]
-            log.info(f"[BAYES] Suggested {n} candidates (best UCB={ucb[top_idx[0]]:.4f})")
+            log.info(f"[BAYES] Suggested {n} candidates (best UCB={ucb[top_idx[0]]:.4f}, beta={self._beta:.2f})")
             return suggestions
         except Exception as e:
             log.warning(f"[BAYES] Prediction failed: {e}")
@@ -273,19 +315,25 @@ class BayesianOptimizer:
     def _fit_gp(self, asset: str):
         try:
             from sklearn.gaussian_process import GaussianProcessRegressor
-            from sklearn.gaussian_process.kernels import Matern
+            from sklearn.gaussian_process.kernels import Matern, ConstantKernel
 
             history = self._history[asset]
             X = np.array([h[0] for h in history])
             y = np.array([h[1] for h in history])
 
-            # Normalize
+            # Normalize X
             X_norm = (X - self.BOUNDS[:, 0]) / (self.BOUNDS[:, 1] - self.BOUNDS[:, 0])
+            
+            # Standardize Y
+            y_mean = np.mean(y)
+            y_std = np.std(y) if np.std(y) > 0 else 1.0
+            y_norm = (y - y_mean) / y_std
 
-            kernel = Matern(nu=2.5)
+            kernel = ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=2.5)
             gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=2, alpha=0.01)
-            gp.fit(X_norm, y)
-            self._gp_model[asset] = gp
+            gp.fit(X_norm, y_norm)
+            
+            self._gp_model[asset] = (gp, y_mean, y_std)
             self._fit_count[asset] = len(history)
             log.info(f"[BAYES] GP fitted on {len(history)} observations for {asset}")
         except Exception as e:
@@ -295,7 +343,7 @@ class BayesianOptimizer:
         candidates = np.random.uniform(0, 1, size=(n, len(self.BOUNDS)))
         return candidates
 
-    def _random_suggestions(self, n: int) -> List[list]:
+    def _random_suggestions(self, n: int) -> list:
         suggestions = []
         for _ in range(n):
             params = []

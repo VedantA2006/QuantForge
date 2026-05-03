@@ -4,7 +4,7 @@
 
 import random
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from backend.strategy.tree import (
     Strategy, RiskParams, Node, BooleanNode, ComparisonNode,
@@ -59,14 +59,42 @@ def update_category_weights(db):
     try:
         if hasattr(db, '_fallback') and db._fallback:
             return
+            
         stats = list(db.db.category_stats.find({}, {"_id": 0}))
+        
+        # Calculate base weights
+        base_weights = {}
         for s in stats:
             cat = s.get("category", "")
+            if cat not in CATEGORY_WEIGHTS: continue
+            
             top20 = s.get("appearances_top20", 0)
             total = max(s.get("appearances_total", 1), 1)
-            if cat in CATEGORY_WEIGHTS and top20 > 3:
-                boost = min(top20 / total * 20, 20)
-                CATEGORY_WEIGHTS[cat] = max(5, int(boost))
+            avg_score = s.get("avg_score", 0.0)
+            
+            w = (top20 / total) * avg_score
+            base_weights[cat] = max(0.001, w)
+            
+        # Apply co-occurrence boost
+        cooc = list(db.db.category_cooccurrences.find({}, {"_id": 0}))
+        cooc_map = {c["pair"]: c["count"] for c in cooc}
+        
+        final_weights = {}
+        for cat in base_weights:
+            boost_factor = 1.0
+            for partner in base_weights:
+                if cat == partner: continue
+                pair_name = "-".join(sorted([cat, partner]))
+                if cooc_map.get(pair_name, 0) > 3:  # Only significant partners
+                    boost_factor += 0.10
+            final_weights[cat] = base_weights[cat] * boost_factor
+            
+        # Normalize to sum to 1
+        total_w = sum(final_weights.values())
+        if total_w > 0:
+            for cat in CATEGORY_WEIGHTS:
+                CATEGORY_WEIGHTS[cat] = final_weights.get(cat, 0.001) / total_w
+                
     except Exception:
         pass
 
@@ -289,21 +317,33 @@ def generate_batch(
     ga_offspring: List[Strategy] = None,
     batch_size: int = BATCH_SIZE,
     bayesian_suggestions: List[list] = None,
-) -> List[Strategy]:
-    """Generate a batch with mix of random, template, GA, and Bayesian strategies."""
+    rl_agent = None,
+) -> List[Tuple[Strategy, dict]]:
+    """Generate a batch with mix of random, template, GA, Bayesian, and RL strategies. Returns list of (Strategy, episode_data)."""
     strategies = []
 
     # Bayesian suggestions first
     if bayesian_suggestions:
         for params in bayesian_suggestions:
             try:
-                strategies.append(generate_from_params(params))
+                strategies.append((generate_from_params(params), None))
             except Exception:
                 pass
 
     # GA offspring
     if ga_offspring:
-        strategies.extend(ga_offspring[:int(batch_size * GA_RATIO)])
+        for s in ga_offspring[:int(batch_size * GA_RATIO)]:
+            strategies.append((s, None))
+            
+    # RL agent
+    from backend.config import RL_ENABLED, RL_BATCH_RATIO
+    n_rl = 0
+    if rl_agent and RL_ENABLED:
+        n_rl = int(batch_size * RL_BATCH_RATIO)
+        for _ in range(n_rl):
+            strat, episode = rl_agent.generate_strategy()
+            if strat:
+                strategies.append((strat, episode))
 
     remaining = batch_size - len(strategies)
     if remaining <= 0:
@@ -314,15 +354,15 @@ def generate_batch(
     n_template = remaining - n_random
 
     for _ in range(n_random):
-        strategies.append(generate_random_strategy())
+        strategies.append((generate_random_strategy(), None))
     for _ in range(n_template):
-        strategies.append(generate_from_template())
+        strategies.append((generate_from_template(), None))
 
-    log.info(f"Generated batch: {n_random} random, {n_template} template, {len(ga_offspring or [])} GA, {len(bayesian_suggestions or [])} bayesian")
+    log.info(f"Generated batch: {n_random} random, {n_template} template, {len(ga_offspring or [])} GA, {len(bayesian_suggestions or [])} bayesian, {n_rl} RL")
     return strategies[:batch_size]
 
 
-def record_category_stats(db, strategy: Strategy, is_top20: bool = False):
+def record_category_stats(db, strategy: Strategy, rank_score: float, is_top20: bool = False):
     """Record which categories appear in a strategy's conditions for weight adaptation."""
     try:
         if hasattr(db, '_fallback') and db._fallback:
@@ -342,11 +382,34 @@ def record_category_stats(db, strategy: Strategy, is_top20: bool = False):
                         seen.add(cat)
 
         for cat in seen:
-            update = {"$inc": {"appearances_total": 1}}
+            # Get current avg
+            doc = db.db.category_stats.find_one({"category": cat})
+            if not doc:
+                doc = {"appearances_total": 0, "avg_score": 0.0}
+            
+            old_avg = doc.get("avg_score", 0.0)
+            old_n = doc.get("appearances_total", 0)
+            
+            new_avg = (old_avg * old_n + rank_score) / (old_n + 1)
+            
+            update = {
+                "$inc": {"appearances_total": 1},
+                "$set": {"avg_score": new_avg}
+            }
             if is_top20:
                 update["$inc"]["appearances_top20"] = 1
             db.db.category_stats.update_one(
                 {"category": cat}, update, upsert=True
             )
+            
+        # Co-occurrences in top 20
+        if is_top20:
+            seen_list = list(seen)
+            for i in range(len(seen_list)):
+                for j in range(i + 1, len(seen_list)):
+                    pair = "-".join(sorted([seen_list[i], seen_list[j]]))
+                    db.db.category_cooccurrences.update_one(
+                        {"pair": pair}, {"$inc": {"count": 1}}, upsert=True
+                    )
     except Exception:
         pass

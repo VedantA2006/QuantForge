@@ -31,8 +31,17 @@ from backend.engine.backtester import run_backtest
 from backend.engine.validator import validate_strategy
 from backend.engine.ranker import rank_strategies
 from backend.engine.optimizer import evolve_population, BayesianOptimizer
+from backend.engine.surrogate import SurrogateModel
+from backend.engine.parallel import StrategyPool
+from backend.engine.rl_builder import RLBuilder
+from backend.engine.hof import check_hof_promotion
 from backend.db.mongo import MongoDB
 from backend.api.routes import router, init_routes
+
+# ── ML Global Instances ───────────────────────────────────────
+surrogate_model = SurrogateModel()
+rl_builder = RLBuilder()
+strategy_pool = StrategyPool()
 
 # ── Logging ───────────────────────────────────────────────────
 _fmt = logging.Formatter(
@@ -126,33 +135,69 @@ async def discovery_loop():
                 if bayes_suggestions:
                     state["bayes_cycles"] += 1
 
-            strategies = generate_batch(
+            batch = generate_batch(
                 ga_offspring=ga_offspring,
                 batch_size=BATCH_SIZE,
                 bayesian_suggestions=bayes_suggestions,
+                rl_agent=rl_builder,
             )
             ga_offspring = []  # consumed
+            
+            # Extract strategies and episodes
+            strategies = [item[0] for item in batch]
+            episodes = {item[0].strategy_id: item[1] for item in batch if item[1]}
 
-            # ── 2. BACKTEST ───────────────────────────────────
-            results = []
+            # ── SURROGATE FILTER ──────────────────────────────
+            from backend.config import SURROGATE_FILTER_THRESHOLD
+            filtered_strategies = []
+            
+            # Get current best score for thresholding
+            best_score = 0.0
+            top = db.get_best(1)
+            if top:
+                best_score = top[0].get("rank_score", 0.0)
+                
+            threshold = SURROGATE_FILTER_THRESHOLD * best_score
+            
             for strat in strategies:
-                bt = run_backtest(strat, df)
-                state["total_evaluated"] += 1
+                # Cold start: allow all if not trained
+                if not surrogate_model.is_trained:
+                    filtered_strategies.append(strat)
+                    continue
+                    
+                pred = surrogate_model.predict(strat)
+                if pred >= threshold or strat.origin in ["elite", "bayesian", "crossover"]:
+                    filtered_strategies.append(strat)
+                else:
+                    surrogate_model.stats["strategies_filtered"] += 1
+                    
+            log.info(f"[SURROGATE] Allowed {len(filtered_strategies)}/{len(strategies)} strategies (threshold={threshold:.2f})")
 
-                # Record for Bayesian optimizer
+            # ── 2 & 3. BACKTEST & VALIDATE (Parallel) ─────────
+            results = []
+            if not strategy_pool.pool:
+                strategy_pool.setup(df)
+                
+            # Run the parallel batch
+            evaluated = strategy_pool.evaluate_batch(filtered_strategies, df)
+            
+            for strat, bt, val in evaluated:
+                state["total_evaluated"] += 1
+                
+                # Surrogate feedback
                 if bt.total_trades >= 10:
-                    score = bt.sharpe_ratio * 0.3 + bt.total_return_pct * 0.001
+                    actual_score = bt.sharpe_ratio * 0.3 + bt.total_return_pct * 0.001
+                    pred = surrogate_model.predict(strat)
+                    if surrogate_model.is_trained:
+                        surrogate_model.record_actual(pred, actual_score)
+                    
+                    # Record for Bayesian optimizer
                     bayesian_optimizer.record(
                         SYMBOL,
                         strat.risk_params.param_vector(),
-                        score,
+                        actual_score,
+                        db
                     )
-
-                if bt.total_trades < 10:
-                    continue
-
-                # ── 3. VALIDATE ───────────────────────────────
-                val = validate_strategy(strat, df)
 
                 results.append((bt, val))
 
@@ -166,7 +211,8 @@ async def discovery_loop():
                 })
 
                 # Record category stats
-                record_category_stats(db, strat, is_top20=False)
+                score = bt.sharpe_ratio * 0.3 + bt.total_return_pct * 0.001 if bt.total_trades > 0 else 0.0
+                record_category_stats(db, strat, score, is_top20=False)
 
             # ── 4. RANK ───────────────────────────────────────
             ranked = rank_strategies(results)
@@ -190,20 +236,45 @@ async def discovery_loop():
                     "strategy": strat_dict,
                 })
 
+                # Check HOF Promotion
+                if check_hof_promotion(r):
+                    strat_dict["is_hof"] = True
+                    db.db.hof_strategies.update_one(
+                        {"strategy_id": r.strategy_id},
+                        {"$set": {
+                            "strategy_id": r.strategy_id,
+                            "rank_score": r.rank_score,
+                            "metrics": r.backtest.to_dict(),
+                            "validation": r.validation.to_dict(),
+                            "strategy": strat_dict,
+                        }},
+                        upsert=True
+                    )
+                    log.info(f"[HOF] Strategy {r.strategy_id} promoted — Sharpe={r.backtest.sharpe_ratio:.2f}, Return={r.backtest.total_return_pct:.1f}%, DD={r.backtest.max_drawdown_pct:.1f}%")
+
                 # Record top 20 category stats
                 if idx < 20:
                     strat_obj = next(
-                        (s for s in strategies if s.strategy_id == r.strategy_id),
+                        (s for s in filtered_strategies if s.strategy_id == r.strategy_id),
                         None,
                     )
                     if strat_obj:
-                        record_category_stats(db, strat_obj, is_top20=True)
+                        record_category_stats(db, strat_obj, r.rank_score, is_top20=True)
+                        
+                # Update RL Agent
+                if r.strategy_id in episodes:
+                    rl_builder.update(episodes[r.strategy_id], r.rank_score)
 
-                # Check strict conditions for "Fully Passed"
+            # Check strict conditions for "Fully Passed"
+            for r in ranked:
                 bt = r.backtest
                 monthly_avg = sum(bt.monthly_returns) / len(bt.monthly_returns) if bt.monthly_returns else 0.0
 
                 if bt.avg_win >= (1.5 * bt.avg_loss) and monthly_avg >= 3.0 and bt.win_rate >= 35.0:
+                    strat_dict = next(
+                        (s.to_dict() for s in filtered_strategies if s.strategy_id == r.strategy_id),
+                        {}
+                    )
                     db.save_fully_passed({
                         "strategy_id": r.strategy_id,
                         "rank_score": r.rank_score,
@@ -213,9 +284,33 @@ async def discovery_loop():
                         "monthly_avg": monthly_avg,
                         "win_loss_ratio": bt.avg_win / bt.avg_loss if bt.avg_loss > 0 else 100.0,
                     })
-                    log.info(f"SUPER STRATEGY DISCOVERED: {r.strategy_id} (Win Rate: {bt.win_rate:.1f}%, RR: {bt.avg_win/bt.avg_loss if bt.avg_loss>0 else 100:.1f}, Monthly: {monthly_avg:.1f}%)")
+                    log.info(f"💎 SUPER STRATEGY DISCOVERED: {r.strategy_id} (Win Rate: {bt.win_rate:.1f}%, RR: {bt.avg_win/bt.avg_loss if bt.avg_loss>0 else 100:.1f}, Monthly: {monthly_avg:.1f}%)")
 
-            # ── 6. OPTIMIZE (GA) every N cycles ───────────────
+            # ── 6. OPTIMIZE (GA & Surrogate) ──────────────────
+            from backend.config import SURROGATE_RETRAIN_EVERY
+            if cycle % SURROGATE_RETRAIN_EVERY == 0:
+                # Retrain surrogate
+                recent = list(db.db.results.find({}, {"_id": 0, "strategy_id": 1, "passed": 1, "metrics.sharpe_ratio": 1, "metrics.total_return_pct": 1}).sort("_id", -1).limit(2000))
+                if recent:
+                    s_ids = [d["strategy_id"] for d in recent]
+                    strat_docs = list(db.db.strategies.find({"strategy_id": {"$in": s_ids}}))
+                    doc_map = {d["strategy_id"]: d for d in strat_docs}
+                    
+                    train_strats = []
+                    train_scores = []
+                    from backend.strategy.tree import strategy_from_dict
+                    for r in recent:
+                        if r["strategy_id"] in doc_map:
+                            try:
+                                s = strategy_from_dict(doc_map[r["strategy_id"]])
+                                m = r.get("metrics", {})
+                                score = (m.get("sharpe_ratio", 0) * 0.3) + (m.get("total_return_pct", 0) * 0.001)
+                                train_strats.append(s)
+                                train_scores.append(score)
+                            except Exception:
+                                pass
+                    surrogate_model.train(train_strats, train_scores)
+
             if cycle % GA_EVOLVE_EVERY_N_CYCLES == 0:
                 top_stored = db.get_top_strategies_with_fitness(
                     GA_POPULATION_SIZE
@@ -276,10 +371,12 @@ async def discovery_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_routes(db, state)
+    bayesian_optimizer.load_history(db)
     task = asyncio.create_task(discovery_loop())
     yield
     state["should_run"] = False
     task.cancel()
+    strategy_pool.close()
 
 
 app = FastAPI(
