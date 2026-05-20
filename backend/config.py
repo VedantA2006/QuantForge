@@ -30,6 +30,7 @@ INITIAL_BALANCE = float(os.getenv("QF_INITIAL_BALANCE", "10000"))
 DEFAULT_RISK_PCT = 0.01
 DEFAULT_FEE = 0.0005       # Bybit taker fee
 DEFAULT_SLIPPAGE = 0.0001
+DEFAULT_SPREAD = 0.0002
 COOLDOWN_BARS = int(os.getenv("QF_COOLDOWN_BARS", "3"))
 
 # ── Genetic Algorithm ────────────────────────────────────────────────────────

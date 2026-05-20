@@ -11,7 +11,7 @@ node_modules/
 frontend/node_modules/
 
 # Cache & logs
-backend/cache/*.parquet
+backend/cache/
 *.log
 
 # Environment

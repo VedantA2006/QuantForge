@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, asdict
 
 from backend.strategy.tree import Strategy
 from backend.config import (
-    INITIAL_BALANCE, DEFAULT_FEE, DEFAULT_SLIPPAGE, COOLDOWN_BARS,
+    INITIAL_BALANCE, DEFAULT_FEE, DEFAULT_SLIPPAGE, DEFAULT_SPREAD, COOLDOWN_BARS,
 )
 
 log = logging.getLogger("quantforge.engine.backtester")
@@ -63,6 +63,7 @@ def run_backtest(
     initial_balance: float = INITIAL_BALANCE,
     fee: float = DEFAULT_FEE,
     slippage: float = DEFAULT_SLIPPAGE,
+    spread: float = DEFAULT_SPREAD,
 ) -> BacktestResult:
     """
     Run a full backtest for a strategy on OHLCV data with indicators.
@@ -98,7 +99,7 @@ def run_backtest(
     closes = df["close"].values
     # Use tf_1h_atr_14 if available, fallback to atr_14
     atr_col = "tf_1h_atr_14" if "tf_1h_atr_14" in df.columns else "atr_14"
-    atrs = df[atr_col].values if atr_col in df.columns else np.full(len(df), 0)
+    atrs = df[atr_col].values if atr_col in df.columns else np.full(len(df), 0.0)
     sig_vals = signals.values
 
     # Regime column for per-regime stats
@@ -139,7 +140,7 @@ def run_backtest(
                         partial_qty = qty / 2
                         position["qty"] -= partial_qty
                         qty = position["qty"]
-                        actual_tp1 = tp1_price * (1 - slippage)
+                        actual_tp1 = tp1_price * (1 - (slippage + spread / 2.0))
                         partial_pnl = (actual_tp1 - entry_price) * partial_qty
                         partial_pnl -= partial_qty * actual_tp1 * fee
                         position["partial_pnl"] += partial_pnl
@@ -150,7 +151,7 @@ def run_backtest(
                         partial_qty = qty / 2
                         position["qty"] -= partial_qty
                         qty = position["qty"]
-                        actual_tp1 = tp1_price * (1 + slippage)
+                        actual_tp1 = tp1_price * (1 + (slippage + spread / 2.0))
                         partial_pnl = (entry_price - actual_tp1) * partial_qty
                         partial_pnl -= partial_qty * actual_tp1 * fee
                         position["partial_pnl"] += partial_pnl
@@ -170,11 +171,8 @@ def run_backtest(
                     hit_sl = l <= sl
                     hit_tp = h >= tp
                     if hit_sl and hit_tp:
-                        # Layer 3: proximity
-                        if abs(o - tp) < abs(o - sl):
-                            exit_price, exit_reason = tp, "TP"
-                        else:
-                            exit_price, exit_reason = sl, "SL"
+                        # Conservative: assume SL wins
+                        exit_price, exit_reason = sl, "SL"
                     elif hit_sl:
                         exit_price, exit_reason = sl, "SL"
                     elif hit_tp:
@@ -188,46 +186,52 @@ def run_backtest(
                     hit_sl = h >= sl
                     hit_tp = l <= tp
                     if hit_sl and hit_tp:
-                        if abs(o - tp) < abs(o - sl):
-                            exit_price, exit_reason = tp, "TP"
-                        else:
-                            exit_price, exit_reason = sl, "SL"
+                        # Conservative: assume SL wins
+                        exit_price, exit_reason = sl, "SL"
                     elif hit_sl:
                         exit_price, exit_reason = sl, "SL"
                     elif hit_tp:
                         exit_price, exit_reason = tp, "TP"
 
-            if exit_reason:
-                # Standardized R-multiple PnL (matches download template)
-                is_win = "TP" in exit_reason
-                risk_usd = position["risk_usd"]
-                sl_mult = strategy.risk_params.sl_atr_mult
-                rr = strategy.risk_params.rr_ratio
-                pnl = risk_usd * ((rr * sl_mult) if is_win else -sl_mult) - (risk_usd * fee * 2)
+            # Force close on last candle if no exit has hit
+            if exit_reason is None and i == len(df) - 1:
+                exit_price = c
+                exit_reason = "FORCE_CLOSE"
 
+            if exit_reason:
+                exit_price_with_slippage = exit_price * (1 - (slippage + spread / 2.0) * side)
+                exit_fee = exit_price_with_slippage * qty * fee
+
+                if side == 1:
+                    remaining_pnl = (exit_price_with_slippage - entry_price) * qty - exit_fee
+                else:
+                    remaining_pnl = (entry_price - exit_price_with_slippage) * qty - exit_fee
+
+                pnl = remaining_pnl + position["partial_pnl"] - position["entry_fee"]
                 balance += pnl
                 entry_regime = position.get("entry_regime", 0)
+                is_win = pnl > 0
+
                 trades.append({
                     "side": "LONG" if side == 1 else "SHORT",
                     "entry_bar": position["entry_bar"],
                     "exit_bar": i,
                     "entry_price": entry_price,
-                    "exit_price": exit_price,
+                    "exit_price": exit_price_with_slippage,
                     "exit_reason": exit_reason,
                     "pnl": pnl,
                     "is_win": is_win,
                     "holding_bars": i - position["entry_bar"],
                     "regime": entry_regime,
                 })
-                equity.append(balance)
                 position = None
 
         # ── Check entry ───────────────────────────────────────────────
         if position is None and i - last_entry_bar >= cooldown:
-            sig = sig_vals[i]
+            sig = sig_vals[i-1]
             if sig != 0 and not np.isnan(atrs[i]) and atrs[i] > 0:
                 side = 1 if sig > 0 else -1
-                entry_price = c * (1 + slippage * side)
+                entry_price = o * (1 + (slippage + spread / 2.0) * side)
                 atr_val = atrs[i]
                 sl_dist = atr_val * strategy.risk_params.sl_atr_mult
                 tp_dist = sl_dist * strategy.risk_params.rr_ratio
@@ -241,6 +245,7 @@ def run_backtest(
 
                 risk_usd = balance * strategy.risk_params.risk_pct
                 qty = risk_usd / sl_dist  # actual quantity sized to risk
+                entry_fee = entry_price * qty * fee
 
                 position = {
                     "side": side,
@@ -252,13 +257,17 @@ def run_backtest(
                     "entry_bar": i,
                     "tp1_hit": False,
                     "partial_pnl": 0.0,
+                    "entry_fee": entry_fee,
                     "entry_regime": int(regimes[i]) if has_regime else 0,
                 }
                 last_entry_bar = i
 
-    # ── Close any open position at last bar ───────────────────────────
-    if position is not None:
-        equity.append(balance)
+        # ── Mark-to-market equity curve calculation ───────────────────
+        mark_to_market = balance
+        if position is not None:
+            unrealized = (c - position["entry"]) * position["qty"] * position["side"]
+            mark_to_market = balance + unrealized + position["partial_pnl"] - position["entry_fee"]
+        equity.append(mark_to_market)
 
     # ── Compute metrics ───────────────────────────────────────────────
     result = _compute_metrics(
@@ -301,7 +310,7 @@ def _compute_metrics(
 
     result.profit_factor = (
         gross_profit / gross_loss if gross_loss > 0 else
-        (10.0 if gross_profit > 0 else 0.0)
+        (float('inf') if gross_profit > 0 else 0.0)
     )
     result.avg_win = float(wins_pnl.mean()) if len(wins_pnl) > 0 else 0.0
     result.avg_loss = float(abs(loss_pnl.mean())) if len(loss_pnl) > 0 else 0.0
@@ -316,32 +325,32 @@ def _compute_metrics(
     dd = (eq - peak) / np.where(peak > 0, peak, 1) * 100
     result.max_drawdown_pct = abs(dd.min())
 
-    # Sharpe ratio (per-trade returns)
+    # Sharpe ratio (per-bar returns)
     ret_series = np.diff(eq) / eq[:-1]
 
-    # Compute actual trades per year from data span
-    trades_per_year = 252.0  # fallback: daily
+    # Compute actual bars per year from data span
+    bars_per_year = 252.0 * 24.0 # default fallback (1h bars)
     if "datetime" in df.columns and len(df) > 1:
         try:
             dt = pd.to_datetime(df["datetime"])
             span_days = (dt.iloc[-1] - dt.iloc[0]).total_seconds() / 86400
             if span_days > 0:
-                trades_per_year = max(n / (span_days / 365.25), 1.0)
+                bars_per_year = max(len(df) / (span_days / 365.25), 1.0)
         except Exception:
             pass
 
     if len(ret_series) > 1 and np.std(ret_series) > 0:
         result.sharpe_ratio = (
-            np.mean(ret_series) / np.std(ret_series) * np.sqrt(trades_per_year)
+            np.mean(ret_series) / np.std(ret_series) * np.sqrt(bars_per_year)
         )
     else:
         result.sharpe_ratio = 0.0
 
     # Sortino ratio
     downside = ret_series[ret_series < 0]
-    if len(downside) > 0 and np.std(downside) > 0:
+    if len(downside) > 1 and np.std(downside) > 0:
         result.sortino_ratio = (
-            np.mean(ret_series) / np.std(downside) * np.sqrt(trades_per_year)
+            np.mean(ret_series) / np.std(downside) * np.sqrt(bars_per_year)
         )
     else:
         result.sortino_ratio = result.sharpe_ratio
@@ -381,7 +390,7 @@ def _compute_metrics(
     # Periodic returns
     if "datetime" in df.columns:
         try:
-            result.monthly_returns, result.yearly_returns = _calc_periodic_returns(trades, initial_balance, df)
+            result.monthly_returns, result.yearly_returns = _calc_periodic_returns(equity, df)
         except Exception:
             result.monthly_returns = []
             result.yearly_returns = {}
@@ -392,41 +401,34 @@ def _compute_metrics(
     return result
 
 
-def _calc_periodic_returns(trades: List[Dict], initial_balance: float, df: pd.DataFrame) -> Tuple[List[float], Dict[str, float]]:
-    """Calculate true calendar monthly and yearly returns from trades."""
-    if "datetime" not in df.columns:
+def _calc_periodic_returns(equity: List[float], df: pd.DataFrame) -> Tuple[List[float], Dict[str, float]]:
+    """Calculate true calendar monthly and yearly returns from bar-by-bar equity curve."""
+    if "datetime" not in df.columns or len(equity) != len(df):
         return [], {}
 
     datetimes = pd.to_datetime(df["datetime"])
-    daily_dates = datetimes.dt.normalize().unique()
-    daily_bal = pd.Series(index=daily_dates, dtype=float)
+    equity_series = pd.Series(equity, index=datetimes)
 
-    current_bal = initial_balance
-    if len(daily_bal) > 0:
-        daily_bal.iloc[0] = current_bal
-
-    for t in trades:
-        exit_dt = datetimes.iloc[t["exit_bar"]].normalize()
-        current_bal += t["pnl"]
-        daily_bal.loc[exit_dt] = current_bal
-
-    daily_bal = daily_bal.ffill()
+    # Resample to daily frequency first, taking the last value of each day
+    daily_bal = equity_series.resample("D").last().ffill()
 
     resampler_code_m = "ME" if pd.__version__ >= "2.2.0" else "M"
     resampler_code_y = "YE" if pd.__version__ >= "2.2.0" else "Y"
 
+    # Resample daily balances to monthly and yearly
     monthly_bal = daily_bal.resample(resampler_code_m).last().dropna()
     yearly_bal = daily_bal.resample(resampler_code_y).last().dropna()
 
+    # Calculate returns
     monthly_returns = []
-    prev_bal = initial_balance
+    prev_bal = equity[0]
     for end_bal in monthly_bal:
         ret = (end_bal / prev_bal - 1) * 100
         monthly_returns.append(round(ret, 2))
         prev_bal = end_bal
 
     yearly_returns = {}
-    prev_bal = initial_balance
+    prev_bal = equity[0]
     for date, end_bal in yearly_bal.items():
         ret = (end_bal / prev_bal - 1) * 100
         yearly_returns[str(date.year)] = round(ret, 2)

@@ -253,18 +253,50 @@ def _generate_category_condition(category: str, direction: str = "buy") -> Compa
     sma_col = random.choice(["sma_20", "sma_50"])
     op = ">" if is_buy else "<"
     return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}{ema_col}"), right=IndicatorNode(column=f"{tf}{sma_col}"))
-
-
 def _build_compound_rule(direction: str, n_conditions: int = None) -> Node:
-    """Build a compound boolean rule from random categories."""
+    """Build a compound boolean rule from random categories with conflict prevention."""
     if n_conditions is None:
-        n_conditions = random.randint(2, 5)
+        n_conditions = random.randint(2, 4)  # Cap at 4 to reduce complexity/overfitting
 
     cats = list(CATEGORY_WEIGHTS.keys())
     weights = list(CATEGORY_WEIGHTS.values())
-    chosen = random.choices(cats, weights=weights, k=n_conditions)
+    chosen = []
+
+    conflict_map = {
+        "rsi_thresh": {"rsi_range", "rsi_momentum"},
+        "rsi_range": {"rsi_thresh", "rsi_momentum"},
+        "rsi_momentum": {"rsi_thresh", "rsi_range"},
+        "stoch_thresh": {"stoch_cross"},
+        "stoch_cross": {"stoch_thresh"},
+        "ema_crossover": {"sma_crossover", "ema_vs_sma"},
+        "sma_crossover": {"ema_crossover", "ema_vs_sma"},
+        "ema_vs_sma": {"ema_crossover", "sma_crossover"},
+        "willr_extreme": {"williams_r"},
+        "williams_r": {"willr_extreme"},
+        "volume_profile": {"volume_spike"},
+        "volume_spike": {"volume_profile"},
+    }
+
+    while len(chosen) < n_conditions and cats and sum(weights) > 0:
+        c = random.choices(cats, weights=weights, k=1)[0]
+        chosen.append(c)
+
+        to_remove = {c}
+        if c in conflict_map:
+            to_remove.update(conflict_map[c])
+
+        for item in to_remove:
+            if item in cats:
+                idx = cats.index(item)
+                cats.pop(idx)
+                weights.pop(idx)
 
     nodes = [_generate_category_condition(cat, direction) for cat in chosen]
+
+    if not nodes:
+        tf = _pick_tf()
+        op = ">" if direction == "buy" else "<"
+        return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}close"), right=IndicatorNode(column=f"{tf}ema_21"))
 
     # Join with AND (biased 2:1 over OR)
     tree = nodes[0]
@@ -272,8 +304,6 @@ def _build_compound_rule(direction: str, n_conditions: int = None) -> Node:
         op = "AND" if random.random() < 0.67 else "OR"
         tree = BooleanNode(operator=op, left=tree, right=node)
     return tree
-
-
 def _rand_risk():
     trail = round(random.choice([0.0, 0.0, 0.0, random.uniform(1.5, 3.0)]), 1)
     tp1 = round(random.choice([0.0, 0.0, 0.0, random.uniform(0.3, 0.6)]), 2)

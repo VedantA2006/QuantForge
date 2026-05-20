@@ -79,7 +79,7 @@ async def get_logs(limit: int = Query(50, ge=1, le=200)):
 @router.get("/hof")
 async def get_hof(limit: int = Query(50, ge=1, le=100)):
     """Hall of Fame strategies."""
-    if not hasattr(_db, '_fallback') or _db._fallback:
+    if not hasattr(_db, 'db') or _db.db is None:
         return {"strategies": [], "count": 0}
         
     strategies = list(_db.db.hof_strategies.find({}, {"_id": 0}).sort("rank_score", -1).limit(limit))
@@ -175,8 +175,8 @@ async def get_strategy(strategy_id: str):
     for s in strategies:
         if s.get("strategy_id") == strategy_id:
             return s
-    # Fallback: search HoF and fully_passed collections (MongoDB only)
-    if not (hasattr(_db, '_fallback') and _db._fallback):
+    # Fallback: search HoF and fully_passed collections
+    if hasattr(_db, 'db') and _db.db is not None:
         for collection_name in ("hof_strategies", "fully_passed_strategies"):
             col = _db.db[collection_name]
             doc = col.find_one({"strategy_id": strategy_id}, {"_id": 0})
@@ -191,8 +191,8 @@ async def get_strategy_code(strategy_id: str):
     # Search best_strategies first
     strategies = _db.get_best(50)
     strategy_data = next((s for s in strategies if s.get("strategy_id") == strategy_id), None)
-    # Fallback: search HoF and fully_passed collections (MongoDB only)
-    if not strategy_data and not (hasattr(_db, '_fallback') and _db._fallback):
+    # Fallback: search HoF and fully_passed collections
+    if not strategy_data and hasattr(_db, 'db') and _db.db is not None:
         for collection_name in ("hof_strategies", "fully_passed_strategies"):
             col = _db.db[collection_name]
             doc = col.find_one({"strategy_id": strategy_id}, {"_id": 0})
