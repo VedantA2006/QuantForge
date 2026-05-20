@@ -3,14 +3,14 @@
 # ╚══════════════════════════════════════════════════════════════╝
 
 from fastapi import APIRouter, Query
-from typing import Optional
+from typing import Optional, Any
 from backend.config import SYMBOL, INTERVALS
 
 router = APIRouter(prefix="/api")
 
 # These will be set by main.py after DB and state init
-_db = None
-_state = None
+_db: Any = None
+_state: Any = None
 
 
 def init_routes(db, state):
@@ -120,7 +120,7 @@ async def get_surrogate_stats():
 async def get_rl_stats():
     """RL agent stats."""
     import sys
-    rl_stats = {"total_updates": 0, "avg_reward_50": 0.0, "weights_buy": {}, "weights_sell": {}}
+    rl_stats: dict[str, Any] = {"total_updates": 0, "avg_reward_50": 0.0, "weights_buy": {}, "weights_sell": {}}
     try:
         if "backend.main" in sys.modules:
             main_mod = sys.modules["backend.main"]
@@ -261,13 +261,16 @@ DURATION = "5y"
 
 INITIAL_BALANCE = 1000.0
 FEE = 0.0005
-SLIPPAGE = 0.0005
+SLIPPAGE = 0.0001
+SPREAD = 0.0002
 
 # Risk Parameters
 SL_ATR_MULT = {strat.risk_params.sl_atr_mult}
 RR_RATIO = {strat.risk_params.rr_ratio}
 RISK_PCT = {strat.risk_params.risk_pct}
 COOLDOWN = {strat.risk_params.cooldown}
+TRAIL_MULT = {strat.risk_params.trail_mult}
+TP1_RATIO = {strat.risk_params.tp1_ratio}
 
 # ======================================================================
 #  INDICATORS LIBRARY (Inlined from QuantForge)
@@ -333,14 +336,19 @@ def run_backtest():
     balance = INITIAL_BALANCE
     position = None
     trades = []
+    equity = [INITIAL_BALANCE]
     last_entry = -(COOLDOWN + 1)
 
     opens, highs, lows, closes = df["open"].values, df["high"].values, df["low"].values, df["close"].values
-    atrs, signals = df["atr_14"].values, df["signal"].values
+    atr_col = "tf_1h_atr_14" if "tf_1h_atr_14" in df.columns else "atr_14"
+    atrs = df[atr_col].values if atr_col in df.columns else np.full(len(df), 0.0)
+    signals = df["signal"].values
     datetimes = df["datetime"].values
 
-    # Track end-of-day balance for monthly/yearly resampling
-    balance_by_date = {{}}
+    # Regime column for per-regime stats
+    regime_col = "tf_1h_regime" if "tf_1h_regime" in df.columns else "regime"
+    has_regime = regime_col in df.columns
+    regimes = df[regime_col].values if has_regime else np.zeros(len(df))
 
     print(f"Running backtest on {{len(df)}} candles...")
 
@@ -349,67 +357,161 @@ def run_backtest():
         bar_dt = pd.Timestamp(datetimes[i])
 
         if position is not None:
-            side, sl, tp, risk = position["side"], position["sl"], position["tp"], position["risk"]
-            exit_reason = None
+            side = position["side"]
+            sl = position["sl"]
+            tp = position["tp"]
+            qty = position["qty"]
+            entry_price = position["entry"]
 
-            if side == 1:
-                if o <= sl: exit_reason = "SL_GAP"
-                elif o >= tp: exit_reason = "TP_GAP"
-                elif l <= sl: exit_reason = "SL"
-                elif h >= tp: exit_reason = "TP"
-            else:
-                if o >= sl: exit_reason = "SL_GAP"
-                elif o <= tp: exit_reason = "TP_GAP"
-                elif h >= sl: exit_reason = "SL"
-                elif l <= tp: exit_reason = "TP"
+            # ── Trailing stop update ──────────────────────────────────
+            if TRAIL_MULT > 0 and not np.isnan(atrs[i]) and atrs[i] > 0:
+                atr_now = atrs[i]
+                if side == 1:
+                    new_sl = c - atr_now * TRAIL_MULT
+                    if new_sl > sl:
+                        sl = new_sl
+                        position["sl"] = sl
+                else:
+                    new_sl = c + atr_now * TRAIL_MULT
+                    if new_sl < sl:
+                        sl = new_sl
+                        position["sl"] = sl
+
+            # ── Partial TP1 check ─────────────────────────────────────
+            if TP1_RATIO > 0 and not position["tp1_hit"]:
+                if side == 1:
+                    tp1_price = entry_price + (tp - entry_price) * TP1_RATIO
+                    if h >= tp1_price:
+                        partial_qty = qty / 2
+                        position["qty"] -= partial_qty
+                        qty = position["qty"]
+                        actual_tp1 = tp1_price * (1 - (SLIPPAGE + SPREAD / 2.0))
+                        partial_pnl = (actual_tp1 - entry_price) * partial_qty
+                        partial_pnl -= partial_qty * actual_tp1 * FEE
+                        position["partial_pnl"] += partial_pnl
+                        position["tp1_hit"] = True
+                else:
+                    tp1_price = entry_price - (entry_price - tp) * TP1_RATIO
+                    if l <= tp1_price:
+                        partial_qty = qty / 2
+                        position["qty"] -= partial_qty
+                        qty = position["qty"]
+                        actual_tp1 = tp1_price * (1 + (SLIPPAGE + SPREAD / 2.0))
+                        partial_pnl = (entry_price - actual_tp1) * partial_qty
+                        partial_pnl -= partial_qty * actual_tp1 * FEE
+                        position["partial_pnl"] += partial_pnl
+                        position["tp1_hit"] = True
+
+            # ── 3-layer exit resolver ─────────────────────────────────
+            exit_reason = None
+            exit_price = None
+
+            if side == 1:  # LONG
+                if o <= sl:
+                    exit_price, exit_reason = o, "GAP_SL"
+                elif o >= tp:
+                    exit_price, exit_reason = o, "GAP_TP"
+                else:
+                    hit_sl = l <= sl
+                    hit_tp = h >= tp
+                    if hit_sl and hit_tp:
+                        exit_price, exit_reason = sl, "SL"
+                    elif hit_sl:
+                        exit_price, exit_reason = sl, "SL"
+                    elif hit_tp:
+                        exit_price, exit_reason = tp, "TP"
+            else:  # SHORT
+                if o >= sl:
+                    exit_price, exit_reason = o, "GAP_SL"
+                elif o <= tp:
+                    exit_price, exit_reason = o, "GAP_TP"
+                else:
+                    hit_sl = h >= sl
+                    hit_tp = l <= tp
+                    if hit_sl and hit_tp:
+                        exit_price, exit_reason = sl, "SL"
+                    elif hit_sl:
+                        exit_price, exit_reason = sl, "SL"
+                    elif hit_tp:
+                        exit_price, exit_reason = tp, "TP"
+
+            # Force close on last candle if no exit has hit
+            if exit_reason is None and i == len(df) - 1:
+                exit_price = c
+                exit_reason = "FORCE_CLOSE"
 
             if exit_reason:
-                is_win = "TP" in exit_reason
-                pnl = risk * ((RR_RATIO * SL_ATR_MULT) if is_win else -SL_ATR_MULT) - (risk * FEE * 2)
-                balance += pnl
+                exit_price_with_slippage = exit_price * (1 - (SLIPPAGE + SPREAD / 2.0) * side)
+                exit_fee = exit_price_with_slippage * qty * FEE
 
-                if "GAP" in exit_reason:
-                    exit_price = o
-                elif is_win:
-                    exit_price = position["tp"]
+                if side == 1:
+                    remaining_pnl = (exit_price_with_slippage - entry_price) * qty - exit_fee
                 else:
-                    exit_price = position["sl"]
+                    remaining_pnl = (entry_price - exit_price_with_slippage) * qty - exit_fee
+
+                pnl = remaining_pnl + position["partial_pnl"] - position["entry_fee"]
+                balance += pnl
+                entry_regime = position.get("entry_regime", 0)
+                is_win = pnl > 0
 
                 trades.append({{
                     "entry_datetime": position["entry_dt"].strftime("%Y-%m-%d %H:%M"),
                     "exit_datetime": bar_dt.strftime("%Y-%m-%d %H:%M"),
                     "side": "LONG" if position["side"] == 1 else "SHORT",
-                    "entry_price": round(position["entry"], 2),
-                    "exit_price": round(exit_price, 2),
+                    "entry_price": round(entry_price, 2),
+                    "exit_price": round(exit_price_with_slippage, 2),
                     "sl": round(position["sl"], 2),
                     "tp": round(position["tp"], 2),
                     "pnl": round(pnl, 2),
                     "result": exit_reason,
                     "is_win": is_win,
                     "balance": round(balance, 2),
+                    "holding_bars": i - position["entry_bar"],
+                    "regime": entry_regime,
                 }})
                 position = None
 
         if position is None and i - last_entry >= COOLDOWN:
-            sig = signals[i]
-            if sig != 0 and atrs[i] > 0:
+            sig = signals[i-1]  # Signal from previous bar
+            if sig != 0 and not np.isnan(atrs[i]) and atrs[i] > 0:
                 side = 1 if sig > 0 else -1
-                entry = c * (1 + SLIPPAGE * side)
-                sl_dist = atrs[i] * SL_ATR_MULT
-                tp_dist = atrs[i] * SL_ATR_MULT * RR_RATIO
+                entry_price = o * (1 + (SLIPPAGE + SPREAD / 2.0) * side)
+                atr_val = atrs[i]
+                sl_dist = atr_val * SL_ATR_MULT
+                tp_dist = sl_dist * RR_RATIO
+
+                if side == 1:
+                    sl_price = entry_price - sl_dist
+                    tp_price = entry_price + tp_dist
+                else:
+                    sl_price = entry_price + sl_dist
+                    tp_price = entry_price - tp_dist
+
+                risk_usd = balance * RISK_PCT
+                qty = risk_usd / sl_dist
+                entry_fee = entry_price * qty * FEE
 
                 position = {{
                     "side": side,
-                    "entry": entry,
+                    "entry": entry_price,
+                    "sl": sl_price,
+                    "tp": tp_price,
+                    "qty": qty,
+                    "risk_usd": risk_usd,
+                    "entry_bar": i,
                     "entry_dt": bar_dt,
-                    "sl": entry - sl_dist if side == 1 else entry + sl_dist,
-                    "tp": entry + tp_dist if side == 1 else entry - tp_dist,
-                    "risk": balance * RISK_PCT,
+                    "tp1_hit": False,
+                    "partial_pnl": 0.0,
+                    "entry_fee": entry_fee,
+                    "entry_regime": int(regimes[i]) if has_regime else 0,
                 }}
                 last_entry = i
 
-        day_key = bar_dt.strftime("%Y-%m-%d")
-        balance_by_date[day_key] = balance
+        mark_to_market = balance
+        if position is not None:
+            unrealized = (c - position["entry"]) * position["qty"] * position["side"]
+            mark_to_market = balance + unrealized + position["partial_pnl"] - position["entry_fee"]
+        equity.append(mark_to_market)
 
     # ── Summary Stats ─────────────────────────────────────────────────────
     wins = sum(1 for t in trades if t["is_win"])
@@ -425,10 +527,16 @@ def run_backtest():
     print(f"Final Balance: ${{balance:.2f}}")
     print("="*50)
 
-    # ── Monthly Returns ───────────────────────────────────────────────────
-    date_idx = pd.to_datetime(list(balance_by_date.keys()))
-    bal_series = pd.Series(list(balance_by_date.values()), index=date_idx).sort_index()
-    monthly_bal = bal_series.resample("M").last().dropna()
+    # ── Monthly & Yearly Returns (Faithful Calendar Resampling) ───────────
+    datetimes_pd = pd.to_datetime(df["datetime"])
+    equity_series = pd.Series(equity, index=datetimes_pd)
+    daily_bal = equity_series.resample("D").last().ffill()
+
+    resampler_code_m = "ME" if pd.__version__ >= "2.2.0" else "M"
+    resampler_code_y = "YE" if pd.__version__ >= "2.2.0" else "Y"
+
+    monthly_bal = daily_bal.resample(resampler_code_m).last().dropna()
+    yearly_bal = daily_bal.resample(resampler_code_y).last().dropna()
 
     monthly_returns = {{}}
     prev_bal = INITIAL_BALANCE
@@ -448,8 +556,6 @@ def run_backtest():
     print(f"Number of months                  : {{len(all_monthly)}}")
     print(f"Average monthly return            : {{avg_monthly:.2f}}%")
 
-    # ── Yearly Returns ────────────────────────────────────────────────────
-    yearly_bal = bal_series.resample("Y").last().dropna()
     yearly_returns = {{}}
     prev_bal = INITIAL_BALANCE
     for dt, end_bal in yearly_bal.items():

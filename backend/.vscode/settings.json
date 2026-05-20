@@ -3,13 +3,13 @@
   "python.interpreterPath": "C:\\Users\\vedan\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
   "python.analysis.extraPaths": [
     "${workspaceFolder}",
-    "${workspaceFolder}/backend",
+    "${workspaceFolder}/..",
     "C:\\Users\\vedan\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages",
     "C:\\Users\\vedan\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages"
   ],
   "python.autoComplete.extraPaths": [
     "${workspaceFolder}",
-    "${workspaceFolder}/backend",
+    "${workspaceFolder}/..",
     "C:\\Users\\vedan\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages",
     "C:\\Users\\vedan\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages"
   ]

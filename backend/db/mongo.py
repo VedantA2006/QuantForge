@@ -5,7 +5,7 @@
 import logging
 from datetime import datetime, timezone, timedelta
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 def clean_dict(d):
     """Recursively convert numpy types to standard python types for MongoDB insertion."""
@@ -308,6 +308,8 @@ class MongoDB:
     """MongoDB client with all QuantForge operations."""
 
     def __init__(self, uri: str = MONGO_URI, db_name: str = MONGO_DB):
+        self.db: Any = None
+        self._fallback: Optional[InMemoryDB] = None
         if not HAS_MONGO:
             log.warning("Using local storage DB fallback")
             self.db = InMemoryDBClient()
@@ -478,7 +480,7 @@ class MongoDB:
 
     # ── Logging ───────────────────────────────────────────────────
 
-    def insert_log(self, level: str, source: str, message: str, cycle: int = 0, extra: dict = None):
+    def insert_log(self, level: str, source: str, message: str, cycle: int = 0, extra: Optional[dict] = None):
         doc = clean_dict({
             "timestamp": datetime.now(timezone.utc),
             "level": level,

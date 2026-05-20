@@ -1,7 +1,7 @@
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  QuantForge — Vectorized Backtest Engine                    ║
 # ║  Hybrid: vectorized signals + iterative position tracking   ║
-# ║  Realistic qty-based PnL, trailing stop, partial TP         ║
+# ║  Realistic qty-based PnL, trailing stop, partial TP (Overhauled) ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 import numpy as np
@@ -332,8 +332,9 @@ def _compute_metrics(
     bars_per_year = 252.0 * 24.0 # default fallback (1h bars)
     if "datetime" in df.columns and len(df) > 1:
         try:
-            dt = pd.to_datetime(df["datetime"])
-            span_days = (dt.iloc[-1] - dt.iloc[0]).total_seconds() / 86400
+            first_val = pd.to_datetime(df["datetime"].iloc[0])
+            last_val = pd.to_datetime(df["datetime"].iloc[-1])
+            span_days = (last_val - first_val).total_seconds() / 86400
             if span_days > 0:
                 bars_per_year = max(len(df) / (span_days / 365.25), 1.0)
         except Exception:
@@ -364,8 +365,9 @@ def _compute_metrics(
     # Avg trades per month
     if "datetime" in df.columns and len(df) > 0:
         try:
-            dt = pd.to_datetime(df["datetime"])
-            span_days = (dt.iloc[-1] - dt.iloc[0]).total_seconds() / 86400
+            first_val = pd.to_datetime(df["datetime"].iloc[0])
+            last_val = pd.to_datetime(df["datetime"].iloc[-1])
+            span_days = (last_val - first_val).total_seconds() / 86400
             span_months = max(span_days / 30.44, 1)
             result.avg_trades_per_month = round(n / span_months, 2)
         except Exception:
@@ -422,16 +424,19 @@ def _calc_periodic_returns(equity: List[float], df: pd.DataFrame) -> Tuple[List[
     # Calculate returns
     monthly_returns = []
     prev_bal = equity[0]
-    for end_bal in monthly_bal:
+    for end_bal_val in monthly_bal:
+        end_bal = end_bal_val
         ret = (end_bal / prev_bal - 1) * 100
         monthly_returns.append(round(ret, 2))
         prev_bal = end_bal
 
     yearly_returns = {}
     prev_bal = equity[0]
-    for date, end_bal in yearly_bal.items():
+    for date_val, end_bal_val in yearly_bal.items():
+        end_bal = end_bal_val
         ret = (end_bal / prev_bal - 1) * 100
-        yearly_returns[str(date.year)] = round(ret, 2)
+        year_str = str(pd.Timestamp(date_val).year)  # type: ignore
+        yearly_returns[year_str] = round(ret, 2)
         prev_bal = end_bal
 
     return monthly_returns, yearly_returns

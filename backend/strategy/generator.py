@@ -4,7 +4,7 @@
 
 import random
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from backend.strategy.tree import (
     Strategy, RiskParams, Node, BooleanNode, ComparisonNode,
@@ -42,7 +42,7 @@ _COMPARISON_OPS = [">", "<", ">=", "<=", "crossover", "crossunder"]
 _BOOLEAN_OPS = ["AND", "OR"]
 
 # ── Category-based condition generation ───────────────────────────────────
-CATEGORY_WEIGHTS = {
+CATEGORY_WEIGHTS: Dict[str, float] = {
     "ema_crossover": 10, "rsi_thresh": 10, "macd_thresh": 8, "stoch_thresh": 7,
     "adx_thresh": 9, "bb_crossover": 7, "momentum_roc": 6, "candle_struct": 5,
     "volume_profile": 6, "price_struct": 5, "regime_filter": 8,
@@ -253,7 +253,7 @@ def _generate_category_condition(category: str, direction: str = "buy") -> Compa
     sma_col = random.choice(["sma_20", "sma_50"])
     op = ">" if is_buy else "<"
     return ComparisonNode(operator=op, left=IndicatorNode(column=f"{tf}{ema_col}"), right=IndicatorNode(column=f"{tf}{sma_col}"))
-def _build_compound_rule(direction: str, n_conditions: int = None) -> Node:
+def _build_compound_rule(direction: str, n_conditions: Optional[int] = None) -> Node:
     """Build a compound boolean rule from random categories with conflict prevention."""
     if n_conditions is None:
         n_conditions = random.randint(2, 4)  # Cap at 4 to reduce complexity/overfitting
@@ -379,13 +379,13 @@ def generate_from_params(params: list) -> Strategy:
 from backend.strategy.templates import generate_from_template
 
 def generate_batch(
-    ga_offspring: List[Strategy] = None,
+    ga_offspring: Optional[List[Strategy]] = None,
     batch_size: int = BATCH_SIZE,
-    bayesian_suggestions: List[list] = None,
+    bayesian_suggestions: Optional[List[list]] = None,
     rl_agent = None,
-) -> List[Tuple[Strategy, dict]]:
+) -> List[Tuple[Strategy, Optional[dict]]]:
     """Generate a batch with mix of random, template, GA, Bayesian, and RL strategies. Returns list of (Strategy, episode_data)."""
-    strategies = []
+    strategies: List[Tuple[Strategy, Optional[dict]]] = []
 
     # Bayesian suggestions first
     if bayesian_suggestions:

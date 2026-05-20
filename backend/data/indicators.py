@@ -199,7 +199,7 @@ def _compute_tf_indicators(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     sk, sd = stochastic(h, l, c)
     out[f"{prefix}stoch_k"] = sk
     out[f"{prefix}stoch_d"] = sd
-    out[f"{prefix}roc_10"] = c.pct_change(10) * 100
+    out[f"{prefix}roc_10"] = c.pct_change(10) * 100  # type: ignore
 
     # ── Volatility ─────────────────────────────────────────────────────────
     out[f"{prefix}atr_14"] = atr(h, l, c, 14)
@@ -256,11 +256,11 @@ def _compute_tf_indicators(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
 
     # Consecutive candles
     bull = out[f"{prefix}is_bullish"].astype(bool)
-    out[f"{prefix}consec_bullish_2"] = (bull & bull.shift(1).fillna(False)).astype(int)
-    out[f"{prefix}consec_bullish_3"] = (bull & bull.shift(1).fillna(False) & bull.shift(2).fillna(False)).astype(int)
+    out[f"{prefix}consec_bullish_2"] = (bull & bull.shift(1, fill_value=False)).astype(int)
+    out[f"{prefix}consec_bullish_3"] = (bull & bull.shift(1, fill_value=False) & bull.shift(2, fill_value=False)).astype(int)
     bear = out[f"{prefix}is_bearish"].astype(bool)
-    out[f"{prefix}consec_bearish_2"] = (bear & bear.shift(1).fillna(False)).astype(int)
-    out[f"{prefix}consec_bearish_3"] = (bear & bear.shift(1).fillna(False) & bear.shift(2).fillna(False)).astype(int)
+    out[f"{prefix}consec_bearish_2"] = (bear & bear.shift(1, fill_value=False)).astype(int)
+    out[f"{prefix}consec_bearish_3"] = (bear & bear.shift(1, fill_value=False) & bear.shift(2, fill_value=False)).astype(int)
 
     # Hammer: lower wick > 2x body, upper wick < 0.3x body
     out[f"{prefix}is_hammer"] = (
@@ -356,8 +356,8 @@ def compute_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     result = pd.concat([result, tf_1h], axis=1)
 
     # Add hour/day features to 1h
-    result["tf_1h_hour_utc"] = result["datetime"].dt.hour
-    result["tf_1h_day_of_week"] = result["datetime"].dt.dayofweek
+    result["tf_1h_hour_utc"] = result["datetime"].dt.hour  # type: ignore
+    result["tf_1h_day_of_week"] = result["datetime"].dt.dayofweek  # type: ignore
 
     # ── Higher timeframes ─────────────────────────────────────────────────
     htf_configs = [
